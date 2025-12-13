@@ -17,7 +17,6 @@ export type BigInteger = setmetatable<{
 	read __tostring: (self: BigInteger) -> string,
 	read __len: (self: BigInteger) -> number,
 	
-	read Sign: (self: BigInteger) -> number,
 	read Negate: (self: BigInteger) -> BigInteger,
 	
 	read ShiftLeft: (self: BigInteger, digits: number) -> BigInteger,
@@ -33,6 +32,7 @@ local log10: (number) -> number = math.log10
 local floor: (number) -> number = math.floor
 local ceil: (number) -> number = math.ceil
 local max: (number) -> number = math.max
+local sign: (number) -> number = math.sign
 
 local rshift: (number, number) -> number = bit32.rshift
 local lshift: (number, number) -> number = bit32.lshift
@@ -48,8 +48,8 @@ local MAX_LOSSLESS_POW: number = 53
 local MAX_BIT32_POW: number = 30 -- Bit32 only works from -2^31 to 2^31, anything over that and it overflows
 
 --> CONSTRUCTOR
-local typeConstructors: {[string]: (any) -> {number}} = {
-	["string"] = function(str: string): {number}
+local typeConstructors: {[string]: (any) -> ({number}, number)} = {
+	["string"] = function(str: string): ({number}, number)
 		local isNegative: boolean = str:sub(1, 1) == "-"
 		local startIdx: number = isNegative and 2 or 1
 		
@@ -69,12 +69,12 @@ local typeConstructors: {[string]: (any) -> {number}} = {
 			arr[len - i + 1 ] = digit
 		end
 		
-		return arr
+		return arr, (isNegative and -1 or 1)
 	end,
 
-	["number"] = function(num: number): {number}
+	["number"] = function(num: number): ({number}, number)
 		if num == 0 then
-			return {0}
+			return {0}, 0
 		end
 
 		local digits: number = ceil(log10(num))
@@ -85,13 +85,13 @@ local typeConstructors: {[string]: (any) -> {number}} = {
 			num //= 10
 		end
 
-		return arr
+		return arr, (sign(num))
 	end,
 	
-	["table"] = function(tbl: {any}): {number}
+	["table"] = function(tbl: {any}): ({number}, number)
 		local first: any = tbl[1]
 		if not first then
-			return {}
+			return {}, 0
 		end
 		
 		assert(
@@ -99,11 +99,11 @@ local typeConstructors: {[string]: (any) -> {number}} = {
 			"attempt to create BigInteger from a table with non-int values"
 		)
 		
-		return tbl
+		return tbl, 1
 	end,
 
-	["nil"] = function(_: nil): {number}
-		return {}
+	["nil"] = function(_: nil): ({number}, number)
+		return {}, 0
 	end,
 }
 
@@ -175,11 +175,7 @@ local function MultiplyKaratsuba(x: BigInteger, y: BigInteger): BigInteger
 		)
 		:AddRaw(z0)
 	
-	print(x)
-	print("low1", low1)
-	print("high1", high1)
-
-	if x:Sign() ~= y:Sign() then
+	if x.signum ~= y.signum then
 		return result:Negate()
 	end
 	
@@ -187,9 +183,8 @@ local function MultiplyKaratsuba(x: BigInteger, y: BigInteger): BigInteger
 end
 
 local function StripLeadingZeros(bigint: BigInteger)
-	local digits: {number} = bigint.digits
-	while #bigint > 1 and digits[1] == 0 do
-		tremove(digits, 1)
+	while #bigint > 1 and bigint.digits[1] == 0 do
+		tremove(bigint.digits, 1)
 	end
 end
 
@@ -198,14 +193,16 @@ end
 -- ====================
 
 function BigInteger.new(num: any): BigInteger
+	local digits: {number}, signum: number = typeConstructors[typeof(num)](num)
+	
 	return setmetatable({
-		num = typeConstructors[typeof(num)](num),
-		signum = -1,
+		digits = digits,
+		signum = signum
 	}, BigInteger) :: BigInteger
 end
 
 function BigInteger:Negate(): BigInteger
-	local result: BigInteger = BigInteger.new(self)
+	local result: BigInteger = BigInteger.new(self.digits)
 	result.signum = -result.signum
 	
 	return result
@@ -216,6 +213,18 @@ end
 -- =====================
 
 function BigInteger:AddRaw(summand: BigInteger): BigInteger
+	local selfSign: number, summandSign: number = self.signum, summand.signum
+	
+	--> CASES
+	print(selfSign, summandSign)
+	if summandSign == 0 then
+		return self
+	elseif selfSign == -1 and summandSign == 1 then
+		return self:Negate():SubtractRaw(summand)
+	elseif selfSign ~= summandSign then
+		return self:SubtractRaw(summand)
+	end
+	
 	local result: BigInteger = BigInteger.new()
 	
 	-- largest
@@ -242,14 +251,14 @@ function BigInteger:AddRaw(summand: BigInteger): BigInteger
 		result.digits[digitsToAdd + 1] = carry
 	end
 	
-	if self:Sign() == -1 and summand:Sign() == 1 then
-		return result:Negate()
-	end
-	
 	return result
 end
 
 function BigInteger:SubtractRaw(subrahend: BigInteger): BigInteger
+	if subrahend.signum == 0 then
+		return self
+	end
+	
 	local result: BigInteger = BigInteger.new()
 	
 	local digitsSelf: {number}, digitsSubrahend: {number} = self.digits, subrahend.digits
@@ -270,11 +279,17 @@ function BigInteger:SubtractRaw(subrahend: BigInteger): BigInteger
 	end
 	
 	StripLeadingZeros(result)
-
+	
 	return result
 end
 
 function BigInteger:MultiplyRaw(factor: BigInteger)
+	local selfSign: number, factorSign: number = self.signum, factor.signum
+	
+	if selfSign == 0 or factorSign == 0 then
+		return BigInteger.new(0)
+	end
+	
 	local selfDigits: {number} = self.digits
 	local factorDigits: {number} = factor.digits
 	
@@ -325,14 +340,34 @@ function BigInteger:MultiplyRaw(factor: BigInteger)
 end
 
 function BigInteger:ToStringRaw(): string
-	local str: string = ""
+	local str: string = (self.signum ~= 0 and self.signum == -1 and "-" or "")
+	
+	local digits: {number} = self.digits
 
 	--> from left to right
-	for i: number = #self, 1, -1 do
-		str ..= tostring(rawget(self, i))
+	for i: number = #digits, 1, -1 do
+		str ..= tostring(digits[i])
 	end
 
 	return str
+end
+
+-- ==================
+--> COMPARISON FUNCTIONS
+-- ==================
+
+function BigInteger:EqualsRaw(num: BigInteger)
+	if (#self :: BigInteger) ~= #num then
+		return false
+	end
+	
+	for i: number, selfDigit: number in (self :: BigInteger).digits do
+		if selfDigit ~= num.digits[i] then
+			return false
+		end
+	end
+	
+	return true
 end
 
 -- ==================
@@ -354,6 +389,7 @@ end
 -- ============
 --> METAMETHODS
 -- ============
+
 BigInteger.__unm = function(self: BigInteger): BigInteger
 	return self:Negate()
 end
@@ -370,12 +406,18 @@ BigInteger.__sub = function(self: BigInteger, subrahend: number | BigInteger): B
 	return self:SubtractRaw(bigint)
 end
 
+BigInteger.__eq = function(self: BigInteger, num: BigInteger): BigInteger
+	local bigint: BigInteger = ArgumentToBigInteger(subrahend, "sub")
+
+	return self:EqualsRaw(bigint)
+end
+
 BigInteger.__tostring = function(self: BigInteger): string
 	return self:ToStringRaw()
 end
 
 BigInteger.__len = function(self: BigInteger): number
-	return #self.digits
+	return rawlen(self.digits)
 end
 
 return table.freeze(BigInteger)
