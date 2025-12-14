@@ -289,8 +289,16 @@ function BigInteger:AddRaw(term: BigInteger): BigInteger
 end
 -- Returns a new BigInteger = x, where self - subrahend: BigInteger = x
 function BigInteger:SubtractRaw(term: BigInteger): BigInteger
-	if term.signum == 0 then
+	local selfSign: number, termSign: number = self.signum, term.signum
+	local sameSign: boolean = (selfSign == termSign)
+	
+	--> CASES
+	if termSign == 0 then
 		return self
+	elseif termSign == -1 and selfSign == 1 then
+		return term:Negate():AddRaw(self)
+	elseif sameSign and selfSign == -1 then -- (-a-(-b)) b-a
+		return (self:Negate():SubtractRaw(term:Negate())):InPlaceNegate()
 	end
 	
 	if self:LowerThanRaw(term) then
@@ -423,7 +431,7 @@ function BigInteger:LowerThanRaw(num: BigInteger): boolean
 	if selfSign < numSign then
 		return true
 	end
-	
+	-- -317314, -717729
 	local bothNegative: boolean = (selfSign == numSign and selfSign == -1)
 	--> check their lengths. for negative, the lowest is with the most digits, and for positive its the lowest
 	if bothNegative and selfLen > numLen then
@@ -437,7 +445,11 @@ function BigInteger:LowerThanRaw(num: BigInteger): boolean
 		local sDigit: number, nDigit: number = selfDigits[i], numDigits[i] or 0
 		if sDigit == nDigit then continue end
 		
-		return (bothNegative and sDigit > nDigit) or (sDigit < nDigit)
+		if bothNegative then
+			return sDigit > nDigit
+		end
+		
+		return sDigit < nDigit
 	end
 
 	return false 
@@ -466,7 +478,11 @@ function BigInteger:LowerOrEqualToRaw(num: BigInteger): boolean
 		local sDigit: number, nDigit: number = selfDigits[i], numDigits[i] or 0
 		if sDigit == nDigit then continue end
 
-		return (bothNegative and sDigit >= nDigit) or (sDigit <= nDigit)
+		if bothNegative then
+			return sDigit >= nDigit
+		end
+
+		return sDigit <= nDigit
 	end
 	
 	return true 
