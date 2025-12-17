@@ -57,6 +57,7 @@ local tcreate = table.create
 local tinsert: <V>({V}, V) -> () & <V>({V}, number, V) -> () = table.insert
 local tremove = table.remove
 local tclone: <T>(T) -> T = table.clone
+local tpack: <V>(...V) -> {[number]: V} = table.pack
 
 local sformat: (string, ...unknown) -> string = string.format
 
@@ -64,8 +65,12 @@ local sformat: (string, ...unknown) -> string = string.format
 --> CONSTANTS
 -- ==========
 
-local KARATSUBA_THRESHOLD: number = 10 -- in limbs
+local KARATSUBA_THRESHOLD: number = 300 -- in limbs, limit where karatsuba is faster than normal multiplication
+local SAFE_UNPACK_THRESHOLD: number = 8000 -- unpack() max size
+
 local MAX_LOSSLESS_POW: number = 53 -- 2^53
+local MAX_LOSSLESS_INT: number = 2^MAX_LOSSLESS_POW-1
+
 local BASE_POW: number = 6 -- MUST SATISFY: 10^((BASE_POW+1) * 2) < 2^53, because of multiplying
 local BASE: number = 10 ^ BASE_POW
 
@@ -79,7 +84,7 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 		
 		local i: number = #str
 		repeat
-			local chars: string = str:sub(math.max(i - BASE_POW + 1, strStart), i)
+			local chars: string = str:sub(max(i - BASE_POW + 1, strStart), i)
 			local num: number? = tonumber(chars)
 			if not num then break end
 			
@@ -134,7 +139,7 @@ local function ArgumentToBigInteger(num: number | BigInteger, errContext: string
 
 	--> make sure toAdd is correct
 	if typeof(num) == "number" then
-		assert(num < 2^MAX_LOSSLESS_POW, "non-BigInteger number should be lower than 2^53.")
+		assert(num < MAX_LOSSLESS_INT, "non-BigInteger number should be lower than 2^53.")
 
 		bigint = BigInteger.new(num)
 	else
@@ -152,32 +157,39 @@ end
 -- Split a digit into its low "d" limbs and its high limbs. For example, split_at(12345, 3) 
 -- will extract the 3 final limbs, giving: high=12, low=345.
 local function GetKaratsubaLower(int: BigInteger, n: number): BigInteger
-	local new: {number} = {}
 	local limbs: {number} = int.limbs
 	
-	for i: number = 1, #limbs - n do
-		tinsert(new, limbs[i])
+	local new: {number} = tcreate(n, 0)
+	
+	for i: number = 1, n do
+		new[i] = limbs[i]
 	end
 	
 	return BigInteger.new(new)
 end
 
 local function GetKaratsubaUpper(int: BigInteger, n: number): BigInteger
-	-- select(#x - half, unpack(x)) this is faster, but unpack only works up to a certain degree. fml
-	-- TODO: figure out that limit and implement this for numbers under that limit (limit is >1k for sure)
-
-	local new: {number} = {}
-	local limbs: {number} = int.limbs
+	-- {(select(#limbs - n + 1, unpack(x))} is faster, but unpack only works up to a certain degree.
 	
-	for i: number = #limbs - n + 1, #limbs do
+	local limbs: {number} = int.limbs
+
+	if #limbs < SAFE_UNPACK_THRESHOLD then
+		return BigInteger.new({
+			select(n + 1, unpack(limbs)) :: number
+		})
+	end
+	
+	local new: {number} = --[[tcreate(#limbs - n - 1, 0)]]{} -- TODO: tcreate here
+	
+	for i: number = n + 1, #limbs do
 		tinsert(new, limbs[i])
 	end
-
+	
 	return BigInteger.new(new)
 end
 
 local function MultiplyKaratsuba(x: BigInteger, y: BigInteger): BigInteger
-	local m2: number = max(#x, #y)//2
+	local m2: number = (max(#x, #y) + 1)//2
 
 	local low1: BigInteger, low2: BigInteger = GetKaratsubaLower(x, m2), GetKaratsubaLower(y, m2)
 	local high1: BigInteger, high2: BigInteger = GetKaratsubaUpper(x, m2), GetKaratsubaUpper(y, m2)
@@ -258,18 +270,18 @@ function BigInteger:AddRaw(term: BigInteger): BigInteger
 	elseif not sameSign then -- +a+(-b)=a-b
 		return self:SubtractRaw(term:Negate(true))
 	end
-	
-	local result: BigInteger = BigInteger.new()
-	
+
 	-- largest
-	local limbsToAdd: number = math.max(#self, #term)
+	local limbsToAdd: number = max(#self, #term)
+
+	local result: BigInteger = BigInteger.new(tcreate(limbsToAdd, 0))
 	
 	local limbsSummand: {number}, limbsSelf: {number} = term.limbs, self.limbs
 	
 	--> from right to left
 	local carry: number = 0
 	for i: number = 1, limbsToAdd do
-		local sum: number = (limbsSelf[i] :: number or 0) + (limbsSummand[i] :: number or 0) + carry
+		local sum: number = (limbsSelf[i] or 0) + (limbsSummand[i] or 0) + carry
 		
 		if sum >= BASE then
 			carry = 1
@@ -309,12 +321,12 @@ function BigInteger:SubtractRaw(term: BigInteger): BigInteger
 	
 	local result: BigInteger = BigInteger.new()
 	
-	local limbsSelf: {number}, limbsSubrahend: {number} = self.limbs, term.limbs
+	local limbsSubrahend: {number} = term.limbs
 
 	--> from right to left
 	local borrow: number = 0
-	for i: number, digit: number in limbsSelf do
-		local diff: number = digit - (limbsSubrahend[i] :: number or 0) - borrow
+	for i: number, digit: number in self.limbs do
+		local diff: number = digit - (limbsSubrahend[i] or 0) - borrow
 		if diff < 0 then
 			borrow = 1
 			diff = diff + BASE
@@ -343,7 +355,7 @@ function BigInteger:MultiplyRaw(factor: BigInteger)
 	local selflimbs: {number} = self.limbs
 	local factorlimbs: {number} = factor.limbs
 	
-	if #self > KARATSUBA_THRESHOLD or #factor > KARATSUBA_THRESHOLD then
+	if #self > KARATSUBA_THRESHOLD and #factor > KARATSUBA_THRESHOLD then
 		return MultiplyKaratsuba(self, factor)
 	end
 
@@ -502,11 +514,11 @@ end
 
 -- Returns a new BigInteger = x, where self * 10^(BASE*amount) = x
 function BigInteger:LeftShift(amount: number)
-	local result = BigInteger.new(self.limbs)
+	local result: BigInteger = BigInteger.new(self.limbs)
 	
 	local tbl: {number} = result.limbs
 	
-	for i = 1, amount do
+	for i: number = 1, amount do
 		tinsert(tbl, 1, 0)
 	end
 	
