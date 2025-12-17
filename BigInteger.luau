@@ -19,21 +19,12 @@ BigInteger.__index = BigInteger
 export type ValidConstructor = string & number & BigInteger & {number} & nil
 
 export type BigInteger = setmetatable<{
-	digits: {number},
+	limbs: {number},
 	signum: number,
-	
-	read __unm: (n: ValidConstructor) -> BigInteger,
-	read __add: (a: ValidConstructor, b: ValidConstructor) -> BigInteger,
-	read __sub: (a: ValidConstructor, b: ValidConstructor) -> BigInteger,
-	read __eq: (a: ValidConstructor, b: ValidConstructor) -> boolean,
-	read __lt: (a: ValidConstructor, b: ValidConstructor) -> boolean,
-	read __le: (a: ValidConstructor, b: ValidConstructor) -> boolean,
-	read __tostring: (n: BigInteger) -> string,
-	read __len: (n: BigInteger) -> number,
 	
 	read Negate: (n: BigInteger, inPlace: boolean) -> BigInteger,
 
-	read ShiftLeft: (n: BigInteger, digits: number) -> BigInteger,
+	read ShiftLeft: (n: BigInteger, limbs: number) -> BigInteger,
 	
 	read AddRaw: (term: BigInteger, term: BigInteger) -> BigInteger,
 	read SubtractRaw: (term: BigInteger, term: BigInteger) -> BigInteger,
@@ -41,7 +32,7 @@ export type BigInteger = setmetatable<{
 	read EqualsRaw: (self: BigInteger, num: BigInteger) -> boolean,
 	read LowerThanRaw: (self: BigInteger, num: BigInteger) -> boolean,
 	read LowerOrEqualToRaw: (self: BigInteger, num: BigInteger) -> boolean,
-	read ToStringRaw: (self: BigInteger) -> string,
+	read ToString: (self: BigInteger) -> string,
 	
 	read Abs: (n: BigInteger) -> BigInteger
 	
@@ -65,35 +56,36 @@ local bor: (number, number) -> number = bit32.bor
 local tcreate = table.create
 local tinsert: <V>({V}, V) -> () & <V>({V}, number, V) -> () = table.insert
 local tremove = table.remove
+local tclone: <T>(T) -> T = table.clone
+
+local sformat: (string, ...unknown) -> string = string.format
 
 -- ==========
 --> CONSTANTS
 -- ==========
 
-local KARATSUBA_THRESHOLD: number = 10 -- in digits
+local KARATSUBA_THRESHOLD: number = 10 -- in limbs
 local MAX_LOSSLESS_POW: number = 53 -- 2^53
+local BASE_POW: number = 6 -- MUST SATISFY: 10^((BASE_POW+1) * 2) < 2^53, because of multiplying
+local BASE: number = 10 ^ BASE_POW
 
 --> CONSTRUCTOR
 local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 	["string"] = function(str: string): ({number}, number)
 		local isNegative: boolean = str:sub(1, 1) == "-"
-		local startIdx: number = isNegative and 2 or 1
+		local strStart: number = isNegative and 2 or 1
 		
-		local digitStr: string = str:sub(startIdx)
-		local len: number = #digitStr
-
-		local arr: {number} = tcreate(len, 0)
+		local arr: {number} = {}
 		
-		for i: number = 1, len do
-			local char: string = digitStr:sub(i, i)
-			local digit: number? = tonumber(char)
-
-			assert(
-				digit, 
-				`attempt to create BigInteger from string containing non-digit characters: {str}`)
+		local i: number = #str
+		repeat
+			local chars: string = str:sub(math.max(i - BASE_POW + 1, strStart), i)
+			local num: number? = tonumber(chars)
+			if not num then break end
 			
-			arr[len - i + 1 ] = digit
-		end
+			i -= BASE_POW
+			tinsert(arr, num)
+		until i < strStart
 		
 		return arr, (isNegative and -1 or 1)
 	end,
@@ -103,10 +95,10 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 			return {0}, 0
 		end
 
-		local digits: number = ceil(log10(num))
-		local arr: {number} = tcreate(digits, 0)
+		local limbs: number = ceil(log10(num))
+		local arr: {number} = tcreate(limbs, 0)
 
-		for i: number = 1, digits do
+		for i: number = 1, limbs do
 			arr[i] = floor(num % 10)
 			num //= 10
 		end
@@ -117,7 +109,7 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 	["table"] = function(tbl: {any}): ({number}, number)
 		local first: any = tbl[1]
 		if not first then
-			return {}, 0
+			return {0}, 0
 		end
 		
 		assert(
@@ -129,7 +121,7 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 	end,
 
 	["nil"] = function(_: nil): ({number}, number)
-		return {}, 0
+		return {0}, 0
 	end,
 }
 
@@ -157,14 +149,14 @@ local function ArgumentToBigInteger(num: number | BigInteger, errContext: string
 	return bigint
 end
 
--- Split a digit into its low "d" digits and its high digits. For example, split_at(12345, 3) 
--- will extract the 3 final digits, giving: high=12, low=345.
+-- Split a digit into its low "d" limbs and its high limbs. For example, split_at(12345, 3) 
+-- will extract the 3 final limbs, giving: high=12, low=345.
 local function GetKaratsubaLower(int: BigInteger, n: number): BigInteger
 	local new: {number} = {}
-	local digits: {number} = int.digits
+	local limbs: {number} = int.limbs
 	
-	for i: number = 1, #digits - n do
-		tinsert(new, digits[i])
+	for i: number = 1, #limbs - n do
+		tinsert(new, limbs[i])
 	end
 	
 	return BigInteger.new(new)
@@ -175,10 +167,10 @@ local function GetKaratsubaUpper(int: BigInteger, n: number): BigInteger
 	-- TODO: figure out that limit and implement this for numbers under that limit (limit is >1k for sure)
 
 	local new: {number} = {}
-	local digits: {number} = int.digits
+	local limbs: {number} = int.limbs
 	
-	for i: number = #digits - n + 1, #digits do
-		tinsert(new, digits[i])
+	for i: number = #limbs - n + 1, #limbs do
+		tinsert(new, limbs[i])
 	end
 
 	return BigInteger.new(new)
@@ -195,7 +187,7 @@ local function MultiplyKaratsuba(x: BigInteger, y: BigInteger): BigInteger
 	local z2: BigInteger = high1:MultiplyRaw(high2)
 
 	-- (z2 × BASE ^ (m2 × 2)) + ((z1 - z2 - z0) × BASE ^ m2) + z0
-	-- since base is 10, we can just prepend zeros to avoid slow exponentiation
+	-- since base is a power of 10, we can just prepend zeros to avoid slow exponentiation
 	local result = z2:LeftShift(m2 * 2)
 		:AddRaw(
 			(z1:SubtractRaw(z2):SubtractRaw(z0)):LeftShift(m2)
@@ -210,8 +202,8 @@ local function MultiplyKaratsuba(x: BigInteger, y: BigInteger): BigInteger
 end
 
 local function StripLeadingZeros(bigint: BigInteger)
-	while #bigint > 1 and bigint.digits[#bigint] == 0 do
-		tremove(bigint.digits, #bigint.digits)
+	while #bigint > 1 and bigint.limbs[#bigint] == 0 do
+		tremove(bigint.limbs, #bigint.limbs)
 	end
 end
 
@@ -221,12 +213,20 @@ end
 
 -- Returns a new BigInteger from given argument
 function BigInteger.new(num: string | number | {number}?): BigInteger
-	local digits: {number}, signum: number = typeConstructors[typeof(num)](num)
+	local limbs: {number}, signum: number = typeConstructors[typeof(num)](num)
 	
 	return setmetatable({
-		digits = digits,
+		limbs = limbs,
 		signum = signum
 	}, BigInteger) :: BigInteger
+end
+
+-- Returns a copy of the BigInteger.
+function BigInteger.clone(n: BigInteger): BigInteger
+	local result = BigInteger.new(n.limbs)
+	result.signum = n.signum
+	
+	return result
 end
 
 -- Returns a new BigInteger with its sign flipped.
@@ -236,7 +236,7 @@ function BigInteger:Negate(inPlace: boolean): BigInteger
 		return self
 	end
 	
-	local result: BigInteger = BigInteger.new(self.digits)
+	local result: BigInteger = BigInteger.new(self.limbs)
 	result.signum = -(self :: BigInteger).signum
 	
 	return result
@@ -253,7 +253,7 @@ function BigInteger:AddRaw(term: BigInteger): BigInteger
 	--> CASES
 	if summandSign == 0 then
 		return self
-	elseif selfSign == -1 and summandSign == 1 then
+	elseif selfSign == -1 and summandSign == 1 then -- -a+b = b+(-a) = b-a
 		return (self:Negate(false):SubtractRaw(term)):Negate(true)
 	elseif not sameSign then -- +a+(-b)=a-b
 		return self:SubtractRaw(term:Negate(true))
@@ -262,27 +262,27 @@ function BigInteger:AddRaw(term: BigInteger): BigInteger
 	local result: BigInteger = BigInteger.new()
 	
 	-- largest
-	local digitsToAdd: number = (#(self :: BigInteger) > #term and #(self :: BigInteger) or #term)
+	local limbsToAdd: number = math.max(#self, #term)
 	
-	local digitsSummand: {number}, digitsSelf: {number} = term.digits, self.digits
+	local limbsSummand: {number}, limbsSelf: {number} = term.limbs, self.limbs
 	
 	--> from right to left
 	local carry: number = 0
-	for i: number = 1, digitsToAdd do
-		local sum: number = (digitsSelf[i] :: number or 0) + (digitsSummand[i] :: number or 0) + carry
-
-		if sum > 9 then
+	for i: number = 1, limbsToAdd do
+		local sum: number = (limbsSelf[i] :: number or 0) + (limbsSummand[i] :: number or 0) + carry
+		
+		if sum >= BASE then
 			carry = 1
-			sum = sum - 10
+			sum = sum - BASE
 		else
 			carry = 0
 		end
 		
-		result.digits[i] = sum
+		result.limbs[i] = sum
 	end
 
 	if carry > 0 then
-		result.digits[digitsToAdd + 1] = carry
+		result.limbs[limbsToAdd + 1] = carry
 	end
 	
 	result.signum = (if sameSign and selfSign == -1 then -1 else 1)
@@ -309,20 +309,20 @@ function BigInteger:SubtractRaw(term: BigInteger): BigInteger
 	
 	local result: BigInteger = BigInteger.new()
 	
-	local digitsSelf: {number}, digitsSubrahend: {number} = self.digits, term.digits
+	local limbsSelf: {number}, limbsSubrahend: {number} = self.limbs, term.limbs
 
 	--> from right to left
 	local borrow: number = 0
-	for i: number, digit: number in digitsSelf do
-		local diff: number = digit - (digitsSubrahend[i] :: number or 0) - borrow
+	for i: number, digit: number in limbsSelf do
+		local diff: number = digit - (limbsSubrahend[i] :: number or 0) - borrow
 		if diff < 0 then
 			borrow = 1
-			diff = diff + 10
+			diff = diff + BASE
 		else
 			borrow = 0
 		end
 		
-		result.digits[i] = diff
+		result.limbs[i] = diff
 	end
 	
 	StripLeadingZeros(result)
@@ -340,48 +340,48 @@ function BigInteger:MultiplyRaw(factor: BigInteger)
 		return BigInteger.new()
 	end
 	
-	local selfDigits: {number} = self.digits
-	local factorDigits: {number} = factor.digits
+	local selflimbs: {number} = self.limbs
+	local factorlimbs: {number} = factor.limbs
 	
 	if #self > KARATSUBA_THRESHOLD or #factor > KARATSUBA_THRESHOLD then
 		return MultiplyKaratsuba(self, factor)
 	end
 
-	local result: BigInteger = BigInteger.new()
+	local result: BigInteger = BigInteger.new({0})
 	
 	-- do normal o(n^2) schoolgrade multiplication
-	for i: number, digit: number in selfDigits do
+	for i: number, digit: number in selflimbs do
 		local carry: number = 0
 		local prependedZeros: number = i - 1
 		
-		local mulResult: BigInteger = BigInteger.new(tcreate(prependedZeros, 0)) -- prepend zeros
+		local mulResult: BigInteger = BigInteger.new(tcreate(prependedZeros, 0), 1) -- prepend zeros
+		mulResult.signum = 1
 		
-		for j: number, factorDigit: number in factorDigits do
+		for j: number, factorDigit: number in factorlimbs do
 			local mul: number = digit * factorDigit + carry
 			
-			if mul > 9 then
-				carry = mul // 10
-				mul = mul % 10
+			if mul > BASE then
+				carry = mul // BASE
+				mul = mul % BASE
 			else
 				carry = 0
 			end
-			
-			mulResult.digits[j + prependedZeros] = mul
+			mulResult.limbs[j + prependedZeros] = mul
 		end
 		
 		--> carry can "ripple" through the number. for example: 9999 + 1
 		while carry > 0 do
-			local last: number? = mulResult.digits[#mulResult + 1]
+			local last: number? = mulResult.limbs[#mulResult + 1]
 			local sum: number = (last or 0) + carry
 			
-			if sum > 9 then
+			if sum >= BASE then
 				carry = 1
-				sum = sum - 10
+				sum = sum - BASE
 			else
 				carry = 0
 			end
 			
-			mulResult.digits[#mulResult + 1] = sum
+			mulResult.limbs[#mulResult + 1] = sum
 		end
 		
 		result = result:AddRaw(mulResult)
@@ -392,14 +392,20 @@ function BigInteger:MultiplyRaw(factor: BigInteger)
 end
 
 -- Returns a new string representation of a BigInteger
-function BigInteger:ToStringRaw(): string
-	local str: string = (self.signum ~= 0 and self.signum == -1 and "-" or "")
+function BigInteger:ToString(): string
+	local str: string = (self.signum == -1 and "-" or "")
+	if self.signum == 0 then
+		return "0"
+	end
 	
-	local digits: {number} = self.digits
-
+	local limbs: {number} = self.limbs
+	str ..=limbs[#limbs]
+	
+	local formatStr: string = `%0{BASE_POW}d`
+	
 	--> from left to right
-	for i: number = #digits, 1, -1 do
-		str ..= tostring(digits[i])
+	for i: number = #limbs - 1, 1, -1 do
+		str ..= sformat(formatStr, limbs[i]) -- prepend dem zeros
 	end
 
 	return str
@@ -415,8 +421,8 @@ function BigInteger:EqualsRaw(num: BigInteger): boolean
 		return false
 	end
 	
-	for i: number, selfDigit: number in (self :: BigInteger).digits do
-		if selfDigit ~= num.digits[i] then
+	for i: number, selfDigit: number in (self :: BigInteger).limbs do
+		if selfDigit ~= num.limbs[i] then
 			return false
 		end
 	end
@@ -435,16 +441,16 @@ function BigInteger:LowerThanRaw(num: BigInteger): boolean
 	end
 	-- -317314, -717729
 	local bothNegative: boolean = (selfSign == numSign and selfSign == -1)
-	--> check their lengths. for negative, the lowest is with the most digits, and for positive its the lowest
+	--> check their lengths. for negative, the lowest is with the most limbs, and for positive its the lowest
 	if bothNegative and selfLen > numLen then
 		return true
 	elseif selfLen < numLen then -- both positive
 		return true
 	end
 	
-	local selfDigits: {number}, numDigits: {number} = self.digits, num.digits
+	local selflimbs: {number}, numlimbs: {number} = self.limbs, num.limbs
 	for i: number = #(self :: BigInteger), 1, -1 do
-		local sDigit: number, nDigit: number = selfDigits[i], numDigits[i] or 0
+		local sDigit: number, nDigit: number = selflimbs[i], numlimbs[i] or 0
 		if sDigit == nDigit then continue end
 		
 		if bothNegative then
@@ -468,16 +474,16 @@ function BigInteger:LowerOrEqualToRaw(num: BigInteger): boolean
 	end
 
 	local bothNegative: boolean = (selfSign == numSign and selfSign == -1)
-	--> check their lengths. for negative, the lowest is with the most digits, and for positive its the lowest
+	--> check their lengths. for negative, the lowest is with the most limbs, and for positive its the lowest
 	if bothNegative and selfLen >= numLen then
 		return true
 	elseif selfLen <= numLen then -- both positive
 		return true
 	end
 
-	local selfDigits: {number}, numDigits: {number} = self.digits, num.digits
+	local selflimbs: {number}, numlimbs: {number} = self.limbs, num.limbs
 	for i: number = #(self :: BigInteger), 1, -1 do
-		local sDigit: number, nDigit: number = selfDigits[i], numDigits[i] or 0
+		local sDigit: number, nDigit: number = selflimbs[i], numlimbs[i] or 0
 		if sDigit == nDigit then continue end
 
 		if bothNegative then
@@ -494,13 +500,13 @@ end
 --> "BOOLEAN" FUNCTIONS
 -- ==================
 
--- Returns a new BigInteger = x, where self * 10^digits = x
-function BigInteger:LeftShift(digits: number)
-	local result = BigInteger.new(self.digits)
+-- Returns a new BigInteger = x, where self * 10^(BASE*amount) = x
+function BigInteger:LeftShift(amount: number)
+	local result = BigInteger.new(self.limbs)
 	
-	local tbl: {number} = result.digits
+	local tbl: {number} = result.limbs
 	
-	for i = 1, digits do
+	for i = 1, amount do
 		tinsert(tbl, 1, 0)
 	end
 	
@@ -553,11 +559,11 @@ BigInteger.__le = function(a: ValidConstructor, b: ValidConstructor): boolean
 end
 
 BigInteger.__tostring = function(n: BigInteger): string
-	return n:ToStringRaw()
+	return n:ToString()
 end
 
 BigInteger.__len = function(n: BigInteger): number
-	return rawlen(n.digits)
+	return rawlen(n.limbs)
 end
 
 -- ===========
