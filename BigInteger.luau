@@ -16,11 +16,14 @@
 local BigInteger = {}
 BigInteger.__index = BigInteger
 
-export type ValidConstructor = string & number & BigInteger & {number} & nil
+export type ValidConstructor = string | number | BigInteger | {number} | nil
+export type ValidMetamethodArgument = string | number | BigInteger
 
 export type BigInteger = setmetatable<{
 	limbs: {number},
 	signum: number,
+	
+	read clone: (n: BigInteger) -> BigInteger,
 	
 	read Negate: (n: BigInteger, inPlace: boolean) -> BigInteger,
 
@@ -32,10 +35,7 @@ export type BigInteger = setmetatable<{
 	read EqualsRaw: (self: BigInteger, num: BigInteger) -> boolean,
 	read LowerThanRaw: (self: BigInteger, num: BigInteger) -> boolean,
 	read LowerOrEqualToRaw: (self: BigInteger, num: BigInteger) -> boolean,
-	read ToString: (self: BigInteger) -> string,
-	
-	read Abs: (n: BigInteger) -> BigInteger
-	
+	read ToString: (self: BigInteger) -> string	
 }, typeof(BigInteger)>
 
 -- =======================
@@ -93,15 +93,15 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 			return {0}, 0
 		end
 
-		local limbs: number = ceil(log10(num))
+		local limbs: number = ceil(log10(num)/BASE_POW)
 		local arr: {number} = tcreate(limbs, 0)
 
 		for i: number = 1, limbs do
-			arr[i] = floor(num % 10)
-			num //= 10
+			arr[i] = floor(num % BASE)
+			num //= BASE
 		end
-
-		return arr, (sign(num))
+		
+		return arr, sign(num)
 	end,
 	
 	["table"] = function(tbl: {any}): ({number}, number)
@@ -127,21 +127,21 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 --> HELPER FUNCTIONS
 -- =================
 
-local function ArgumentToBigInteger(num: number | BigInteger, errContext: string): BigInteger
+local function ArgumentToBigInteger(num: ValidMetamethodArgument?, errContext: string): BigInteger
 	local bigint: BigInteger;
 
 	--> make sure toAdd is correct
-	if typeof(num) == "number" then
-		assert(num < MAX_LOSSLESS_INT, "non-BigInteger number should be lower than 2^53.")
-
-		bigint = BigInteger.new(num)
+	if getmetatable(num :: BigInteger?) == BigInteger then
+		bigint = num :: BigInteger
 	else
+		local numType: string = typeof(num)
+		
 		assert(
-			getmetatable(num) == BigInteger, 
-			`attempt to perform arithmetic ({errContext}) on BigInteger and {typeof(num)}`
+			numType ~= "table" and typeConstructors[numType] ~= nil,
+			`attempt to perform ({errContext}) on BigInteger and {numType}`
 		)
-
-		bigint = num
+		
+		bigint = BigInteger.new(num)
 	end
 
 	return bigint
@@ -183,7 +183,7 @@ local function GetKaratsubaUpper(int: BigInteger, n: number): BigInteger
 end
 
 local function MultiplyKaratsuba(x: BigInteger, y: BigInteger): BigInteger
-	local m2: number = (max(#x, #y) + 1)//2
+	local m2: number = (max(#x.limbs, #y.limbs) + 1)//2
 
 	local low1: BigInteger, low2: BigInteger = GetKaratsubaLower(x, m2), GetKaratsubaLower(y, m2)
 	local high1: BigInteger, high2: BigInteger = GetKaratsubaUpper(x, m2), GetKaratsubaUpper(y, m2)
@@ -218,7 +218,7 @@ end
 -- ====================
 
 -- Returns a new BigInteger from given argument
-function BigInteger.new(num: string | number | {number}?): BigInteger
+function BigInteger.new(num: ValidConstructor): BigInteger
 	local limbs: {number}, signum: number = typeConstructors[typeof(num)](num)
 	
 	return setmetatable({
@@ -258,19 +258,20 @@ function BigInteger:AddRaw(term: BigInteger): BigInteger
 	
 	--> CASES
 	if summandSign == 0 then
-		return self
+		return self:clone()
+	elseif selfSign == 0 then
+		return term:clone()
 	elseif selfSign == -1 and summandSign == 1 then -- -a+b = b+(-a) = b-a
 		return (self:Negate(false):SubtractRaw(term)):Negate(true)
 	elseif not sameSign then -- +a+(-b)=a-b
 		return self:SubtractRaw(term:Negate(true))
 	end
-
-	-- largest
-	local limbsToAdd: number = max(#self, #term)
-
-	local result: BigInteger = BigInteger.new(tcreate(limbsToAdd, 0))
 	
 	local limbsSummand: {number}, limbsSelf: {number} = term.limbs, self.limbs
+	local limbsToAdd: number = max(#limbsSelf, #limbsSummand)
+
+	local result: BigInteger = BigInteger.new(tcreate(limbsToAdd, 0))
+
 	
 	--> from right to left
 	local carry: number = 0
@@ -302,8 +303,10 @@ function BigInteger:SubtractRaw(term: BigInteger): BigInteger
 	
 	--> CASES
 	if termSign == 0 then
-		return self
-	elseif termSign == -1 and selfSign == 1 then
+		return self:clone()
+	elseif selfSign == 0 then
+		return term:clone()
+	elseif termSign == -1 and selfSign == 1 then -- a - (-b) = a + b
 		return term:Negate(false):AddRaw(self)
 	elseif sameSign and selfSign == -1 then -- (-a-(-b)) b-a
 		return (self:Negate(false):SubtractRaw(term:Negate(false))):Negate(true)
@@ -349,11 +352,11 @@ function BigInteger:MultiplyRaw(factor: BigInteger): BigInteger
 	local selflimbs: {number} = self.limbs
 	local factorlimbs: {number} = factor.limbs
 	
-	if #self > KARATSUBA_THRESHOLD and #factor > KARATSUBA_THRESHOLD then
+	if #selflimbs > KARATSUBA_THRESHOLD and #factorlimbs > KARATSUBA_THRESHOLD then
 		return MultiplyKaratsuba(self, factor)
 	end
 
-	local result: BigInteger = BigInteger.new({0})
+	local result: BigInteger = BigInteger.new(tcreate(0, #selflimbs))
 	
 	-- do normal o(n^2) schoolgrade multiplication
 	for i: number, digit: number in selflimbs do
@@ -377,7 +380,7 @@ function BigInteger:MultiplyRaw(factor: BigInteger): BigInteger
 		
 		--> carry can "ripple" through the number. for example: 9999 + 1
 		while carry > 0 do
-			local last: number? = mulResult.limbs[#mulResult + 1]
+			local last: number? = mulResult.limbs[#mulResult.limbs + 1]
 			local sum: number = (last or 0) + carry
 			
 			if sum >= BASE then
@@ -387,7 +390,7 @@ function BigInteger:MultiplyRaw(factor: BigInteger): BigInteger
 				carry = 0
 			end
 			
-			mulResult.limbs[#mulResult + 1] = sum
+			mulResult.limbs[#mulResult.limbs + 1] = sum
 		end
 		
 		result = result:AddRaw(mulResult)
@@ -423,11 +426,11 @@ end
 
 -- Returns true if self == num, false if not.
 function BigInteger:EqualsRaw(num: BigInteger): boolean
-	if (#(self :: BigInteger) ~= #num) or (self.signum ~= num.signum) then
+	if (#(self :: BigInteger).limbs ~= #num.limbs) or (self.signum ~= num.signum) then
 		return false
 	end
 	
-	for i: number, selfDigit: number in (self :: BigInteger).limbs do
+	for i: number, selfDigit: number in self.limbs do
 		if selfDigit ~= num.limbs[i] then
 			return false
 		end
@@ -439,7 +442,7 @@ end
 -- Returns true if self < num, false if not.
 function BigInteger:LowerThanRaw(num: BigInteger): boolean
 	local selfSign: number, numSign: number = self.signum, num.signum
-	local selfLen: number, numLen: number = #(self :: BigInteger), #num
+	local selfLen: number, numLen: number = #self.limbs, #num.limbs
 	
 	--> check sign
 	if selfSign < numSign then
@@ -455,7 +458,7 @@ function BigInteger:LowerThanRaw(num: BigInteger): boolean
 	end
 	
 	local selflimbs: {number}, numlimbs: {number} = self.limbs, num.limbs
-	for i: number = #(self :: BigInteger), 1, -1 do
+	for i: number = #selflimbs, 1, -1 do
 		local sDigit: number, nDigit: number = selflimbs[i], numlimbs[i] or 0
 		if sDigit == nDigit then continue end
 		
@@ -472,7 +475,7 @@ end
 -- Returns true if self <= num, false if not.
 function BigInteger:LowerOrEqualToRaw(num: BigInteger): boolean
 	local selfSign: number, numSign: number = self.signum, num.signum
-	local selfLen: number, numLen: number = #(self :: BigInteger), #num
+	local selfLen: number, numLen: number = #self.limbs, #num.limbs
 
 	--> check sign
 	if selfSign <= numSign then
@@ -488,7 +491,7 @@ function BigInteger:LowerOrEqualToRaw(num: BigInteger): boolean
 	end
 
 	local selflimbs: {number}, numlimbs: {number} = self.limbs, num.limbs
-	for i: number = #(self :: BigInteger), 1, -1 do
+	for i: number = #selflimbs, 1, -1 do
 		local sDigit: number, nDigit: number = selflimbs[i], numlimbs[i] or 0
 		if sDigit == nDigit then continue end
 
@@ -507,8 +510,8 @@ end
 -- ==================
 
 -- Returns a new BigInteger = x, where self * 10^(BASE*amount) = x
-function BigInteger:LeftShift(amount: number)
-	local result: BigInteger = BigInteger.new(self.limbs)
+function BigInteger:LeftShift(amount: number): BigInteger
+	local result: BigInteger = BigInteger.clone(self)
 	
 	local tbl: {number} = result.limbs
 	
@@ -523,48 +526,48 @@ end
 --> METAMETHODS
 -- ============
 
-BigInteger.__unm = function(num: ValidConstructor): BigInteger
+BigInteger.__unm = function(num: ValidMetamethodArgument): BigInteger
 	local bigint: BigInteger = ArgumentToBigInteger(num, "unm")
 	
 	return bigint:Negate(false)
 end
 
-BigInteger.__add = function(a: ValidConstructor, b: ValidConstructor): BigInteger
+BigInteger.__add = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): BigInteger
 	local term1: BigInteger = ArgumentToBigInteger(a, "add")
 	local term2: BigInteger = ArgumentToBigInteger(b, "add")
 	
 	return term1:AddRaw(term2)
 end
 
-BigInteger.__sub = function(a: ValidConstructor, b: ValidConstructor): BigInteger
+BigInteger.__sub = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): BigInteger
 	local term1: BigInteger = ArgumentToBigInteger(a, "sub")
 	local term2: BigInteger = ArgumentToBigInteger(b, "sub")
 
 	return term1:SubtractRaw(term2)
 end
 
-BigInteger.__mul = function(a: ValidConstructor, b: ValidConstructor): BigInteger
+BigInteger.__mul = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): BigInteger
 	local term1: BigInteger = ArgumentToBigInteger(a, "mul")
 	local term2: BigInteger = ArgumentToBigInteger(b, "mul")
 
 	return term1:MultiplyRaw(term2)
 end
 
-BigInteger.__eq = function(a: ValidConstructor, b: ValidConstructor): boolean
+BigInteger.__eq = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): boolean
 	local term1: BigInteger = ArgumentToBigInteger(a, "eq")
 	local term2: BigInteger = ArgumentToBigInteger(b, "eq")
 	
 	return term1:EqualsRaw(term2)
 end
 
-BigInteger.__lt = function(a: ValidConstructor, b: ValidConstructor): boolean
+BigInteger.__lt = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): boolean
 	local term1: BigInteger = ArgumentToBigInteger(a, "lt")
 	local term2: BigInteger = ArgumentToBigInteger(b, "lt")
 	
 	return term1:LowerThanRaw(term2)
 end
 
-BigInteger.__le = function(a: ValidConstructor, b: ValidConstructor): boolean
+BigInteger.__le = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): boolean
 	local term1: BigInteger = ArgumentToBigInteger(a, "le")
 	local term2: BigInteger = ArgumentToBigInteger(b, "le")
 
