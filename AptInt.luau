@@ -480,7 +480,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 		
 		--> first correction
 		if divisorSinglelimb then
-			while (qhat >= BASE) or (qhat * (V[n - 1] or 0) > rhat * BASE + (U[nPlusJ - 2] or 0)) do
+			while (qhat >= BASE) or (qhat * (Vn[n - 1] or 0) > rhat * BASE + (Un[nPlusJ - 2] or 0)) do
 				qhat -= 1
 				rhat += Vnn
 				if rhat >= BASE then break end
@@ -496,23 +496,26 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 		end
 
 		--> d4. multiply & subtract
+		local carry: number = 0
 		local borrow: number = 0
-		for i: number = 1, n do
-			local p: number = qhat * Vn[i] + borrow
-			local digitP: number = p % BASE
 
-			local sub: number = Un[i + j] - digitP
-			if sub < 0 then
-				sub = sub + BASE
+		for i = 1, n do
+			local p: number = qhat * Vn[i] + carry
+			carry = p // BASE
+			local pDigit: number = p % BASE
+			
+			local diff: number = Un[i + j] - pDigit - borrow
+			if diff < 0 then
 				borrow = 1
-			else
-				borrow = 0
+				Un[i + j] = diff + BASE
+				continue
 			end
 			
-			Un[i + j] = sub
+			Un[i + j] = diff
+			borrow = 0
 		end
-
-		local lastSub: number = (Un[nPlusJ] or 0) - borrow
+		
+		local lastSub: number = (Un[nPlusJ] or 0) - carry - borrow
 		Un[nPlusJ] = lastSub
 
 		--> d6. add back
@@ -522,7 +525,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 		end
 		
 		quotient.limbs[j + 1] = qhat - 1
-		local carry: number = 0
+		carry = 0
 
 		for i: number = 1, n do
 			local sum: number = Un[i + j] + Vn[i] + carry
@@ -554,15 +557,53 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 			carry = x % D :: number
 		end
 	end
-	
+	print(remainder)
 	if divSign ~= selfSign then
 		return quotient:Negate(true), remainder
 	end
-
+	print(remainder)
 	return quotient, remainder
 end
 
--- Returns a new string representation of a AptInt
+function AptInt:ModRaw(div: AptInt): AptInt
+	local limbs: {number} = div.limbs
+	local numLimbs: number = #limbs
+	local lastLimb: number = limbs[numLimbs]
+	
+	local selfLast: number = self.limbs[#self.limbs]
+	
+	if numLimbs == 1 and lastLimb == 0 then
+		return AptInt.new()
+	end
+	print("h")
+	if numLimbs ~= 1 then
+		local _: AptInt, r: AptInt = self:DivideRaw(div)
+		return r
+	end
+	print("Here")
+	--> single limb optimizations
+	local absLast: number = abs(lastLimb)
+	local divSign: number = div.signum
+	
+	--> TODO: this might be some of the ugliest code ive written.
+	--> total rewrite + support for powers of 2, 5, 10 etc.
+	if absLast == 2 then
+		return AptInt.new((selfLast % 2) * divSign)
+	elseif absLast == 5 then
+		return AptInt.new((selfLast % 5) * divSign)
+	elseif absLast == 10 then
+		return AptInt.new((selfLast % 10) * divSign)
+	end
+	
+	local _: AptInt, r: AptInt = self:DivideRaw(div)
+	return r
+end
+
+-- ==================
+--> QoL FUNCTIONS
+-- ==================
+
+-- Returns a new string representation of an AptInt
 function AptInt:ToString(): string
 	local str: string = (self.signum == -1 and "-" or "")
 	if self.signum == 0 then
@@ -580,6 +621,10 @@ function AptInt:ToString(): string
 	end
 
 	return str
+end
+
+-- Returns a double whose value is equal to tonumber(x)
+function AptInt:ToNumber(): number
 end
 
 -- ==================
