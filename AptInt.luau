@@ -44,11 +44,11 @@ export type AptInt = setmetatable<{
 -- =======================
 
 local log10: (number) -> number = math.log10
+local log: (number, number?) -> number = math.log
 local floor: (number) -> number = math.floor
 local ceil: (number) -> number = math.ceil
 local max: (number) -> number = math.max
 local abs: (number) -> number = math.abs
-local round: (number) -> number = math.round
 local sign: (number) -> number = math.sign
 
 local tcreate: <V>(number, V?) -> {V} = table.create
@@ -215,6 +215,16 @@ local function MultiplyKaratsuba(x: AptInt, y: AptInt): AptInt
 	end
 	
 	return result
+end
+
+--> for modulo. get modulo of single limb div^x
+local function TryModExp(limb: number, div: number, base: number): (boolean, AptInt)
+	local log: number = log(div, base)
+	if log ~= floor(log) then
+		return false, AptInt.new()
+	end
+	
+	return true, AptInt.new({limb % div})
 end
 
 local function StripLeadingZeros(bigint: AptInt)
@@ -415,6 +425,8 @@ end
 
 -- Returns the quotient and remainder of a / b.
 function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
+	--> we use knuths algorithm D for division
+	--> when we have a single limbed divisor, we can skip normalizing/unnormalizing for immense performance gains
 	local divSign: number, selfSign: number = divisor.signum, self.signum
 	local sameSign: boolean = divSign == selfSign
 	
@@ -438,7 +450,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	local U: {number}, V: {number} = self.limbs, divisor.limbs
 	if #U == 1 and #V == 1 then -- single limb division
 		local mod: number = U[1] % V[1]
-		local q: number = round(U[1] * selfSign / V[1] * divSign)
+		local q: number = floor(U[1] * selfSign / V[1] * divSign)
 		return AptInt.new({q}), AptInt.new({mod})
 	end
 	
@@ -448,7 +460,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	local n: number = #V
 	local m: number = #U - n
 	
-	--> d1. normalize
+	--> d1. normalize (get Vn and Un)
 	local Vn: {number}, Un: {number}, D: number?
 	if divisorSinglelimb then
 		Un, Vn = (self :: AptInt):clone().limbs, {divisor.limbs[1]}
@@ -544,8 +556,6 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	end
 	
 	local remainder: AptInt = AptInt.new(Un)
-	StripLeadingZeros(remainder)
-	StripLeadingZeros(quotient)
 	
 	--> d8. unnormalize
 	if not divisorSinglelimb then
@@ -557,11 +567,15 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 			carry = x % D :: number
 		end
 	end
-	print(remainder)
+	
+	StripLeadingZeros(remainder)
+	StripLeadingZeros(quotient)
+	
+	--> return
 	if divSign ~= selfSign then
 		return quotient:Negate(true), remainder
 	end
-	print(remainder)
+	
 	return quotient, remainder
 end
 
@@ -575,25 +589,23 @@ function AptInt:ModRaw(div: AptInt): AptInt
 	if numLimbs == 1 and lastLimb == 0 then
 		return AptInt.new()
 	end
-	print("h")
+	
 	if numLimbs ~= 1 then
 		local _: AptInt, r: AptInt = self:DivideRaw(div)
 		return r
 	end
-	print("Here")
+	
 	--> single limb optimizations
 	local absLast: number = abs(lastLimb)
-	local divSign: number = div.signum
+	local divSign: number = div.signum * (self :: AptInt).signum
 	
-	--> TODO: this might be some of the ugliest code ive written.
-	--> total rewrite + support for powers of 2, 5, 10 etc.
-	if absLast == 2 then
-		return AptInt.new((selfLast % 2) * divSign)
-	elseif absLast == 5 then
-		return AptInt.new((selfLast % 5) * divSign)
-	elseif absLast == 10 then
-		return AptInt.new((selfLast % 10) * divSign)
-	end
+	--> TODO: refactor this
+	local success: boolean, mod: AptInt = TryModExp(selfLast, absLast, 2)
+	if success then return mod * divSign end
+	success, mod = TryModExp(selfLast, absLast, 5)
+	if success then return mod * divSign end
+	success, mod =  TryModExp(selfLast, absLast, 10)
+	if success then return mod * divSign end
 	
 	local _: AptInt, r: AptInt = self:DivideRaw(div)
 	return r
