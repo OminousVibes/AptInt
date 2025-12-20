@@ -217,23 +217,42 @@ local function MultiplyKaratsuba(x: AptInt, y: AptInt): AptInt
 	return result
 end
 
---> for modulo. get modulo of single limb div^x
-local function TryModExp(limb: number, div: number, base: number): (boolean, AptInt)
-	local log: number = log(div, base)
-	if log ~= floor(log) then
-		return false, AptInt.new()
+--> divsion stuff
+local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt)
+	local selfSign: number, divSign: number = self.signum, divisor.signum
+	local sameSign: boolean = selfSign == divSign
+	
+	if sameSign then
+		if divSign == -1 then
+			return remainder:Negate(true)
+		end
+		
+		return remainder
+	elseif selfSign == 1 and divSign == -1 and remainder.signum ~= 0 then
+		return divisor:AddRaw(remainder)
+	elseif remainder.signum ~= 0 then
+		return divisor:SubtractRaw(remainder)
 	end
 	
-	return true, AptInt.new({limb % div})
+	return remainder
 end
 
-local function StripLeadingZeros(bigint: AptInt)
-	while #bigint > 1 and bigint.limbs[#bigint] == 0 do
-		tremove(bigint.limbs, #bigint.limbs)
-	end
+local function TryModExp(limb: number, div: number, base: number): (boolean, number)
+	local log: number = log(div, base)
+	if log ~= floor(log) or log > BASE_POW then -- log > BASE_POW since each power we check 1 more digit
+		return false, 0
+	end	
 	
-	if #bigint.limbs == 0 then
-		bigint.signum = 0
+	return true, limb % div
+end
+
+local function StripLeadingZeros(n: AptInt)
+	local limbs: {number} = n.limbs
+	while #limbs > 1 and limbs[#limbs] == 0 do
+		tremove(limbs, #limbs)
+	end
+	if #limbs == 1 and limbs[#limbs] == 0 then
+		n.signum = 0
 	end
 end
 
@@ -266,7 +285,7 @@ function AptInt:Negate(inPlace: boolean): AptInt
 		return self
 	end
 	
-	local result: AptInt = AptInt.clone(self)
+	local result: AptInt = self:clone()
 	result.signum = -result.signum
 	
 	return result
@@ -433,15 +452,22 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	--> CASES
 	
 	--> avoid clone
-	self.signum = abs(selfSign)
-	divisor.signum = abs(divSign)
-	
 	if divSign == 0 or selfSign == 0 then -- dividing by 0
 		return AptInt.new(), AptInt.new()
 	elseif self:LowerThanRaw(divisor) then
-		return AptInt.new(), AptInt.new()
+		if selfSign == 1 and divSign == -1 then
+			return AptInt.new(), divisor:AddRaw(self)
+		elseif selfSign == -1 and divSign == 1 then
+			return AptInt.new({1}), divisor:SubtractRaw(self:Negate(false))
+		elseif sameSign and divSign == -1 then
+			return AptInt.new(), self:clone()
+		end
+		
+		return AptInt.new(), self:clone()
 	elseif self:EqualsRaw(divisor) then -- dividing x/x = 1
-		return AptInt.new({1}), AptInt.new({1})
+		return AptInt.new({1}), AptInt.new()
+	elseif self:Negate(false):EqualsRaw(divisor) or self:EqualsRaw(divisor:Negate(false)) then -- -x/x = -1
+		return AptInt.new({-1}), AptInt.new()
 	end
 	
 	self.signum = selfSign
@@ -572,40 +598,43 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	StripLeadingZeros(quotient)
 	
 	--> return
-	if divSign ~= selfSign then
-		return quotient:Negate(true), remainder
+	--> TODO: genuinely what is this
+	remainder = CorrectRemainder(self, divisor, remainder)
+	if not sameSign then
+		quotient:Negate(true)
 	end
 	
 	return quotient, remainder
 end
 
 function AptInt:ModRaw(div: AptInt): AptInt
-	local limbs: {number} = div.limbs
-	local numLimbs: number = #limbs
-	local lastLimb: number = limbs[numLimbs]
-	
-	local selfLast: number = self.limbs[#self.limbs]
-	
-	if numLimbs == 1 and lastLimb == 0 then
+	--> TODO: thjis can probably be refactored somehow
+	local divLimbs: {number} = div.limbs
+	local divLimbAmount: number, selfLimbAmount: number = #divLimbs, #(self :: AptInt).limbs
+
+	local selfSign: number, divSign: number = self.signum, div.signum
+
+	local divFirst: number = divLimbs[1] * divSign
+	local selfFirst: number = self.limbs[1] * selfSign
+
+	if divSign == 0 or (divLimbAmount == 1 and abs(divFirst) == 1) then
 		return AptInt.new()
-	end
-	
-	if numLimbs ~= 1 then
+	elseif selfLimbAmount == 1 and divLimbAmount == 1 then
+		return AptInt.new({selfFirst % divFirst})
+	elseif divLimbAmount ~= 1 then
 		local _: AptInt, r: AptInt = self:DivideRaw(div)
 		return r
 	end
 	
-	--> single limb optimizations
-	local absLast: number = abs(lastLimb)
-	local divSign: number = div.signum * (self :: AptInt).signum
+	--> single limb divisor optimizations
+	local success: boolean, mod: number = TryModExp(selfFirst, divFirst, 2) -- 2
+	if success then return AptInt.new({mod}) end
 	
-	--> TODO: refactor this
-	local success: boolean, mod: AptInt = TryModExp(selfLast, absLast, 2)
-	if success then return mod * divSign end
-	success, mod = TryModExp(selfLast, absLast, 5)
-	if success then return mod * divSign end
-	success, mod =  TryModExp(selfLast, absLast, 10)
-	if success then return mod * divSign end
+	success, mod = TryModExp(selfFirst, divFirst, 5) -- 5
+	if success then return AptInt.new({mod}) end
+	
+	success, mod =  TryModExp(selfFirst, divFirst, 10) -- 10
+	if success then return AptInt.new({mod}) end
 	
 	local _: AptInt, r: AptInt = self:DivideRaw(div)
 	return r
@@ -637,6 +666,7 @@ end
 
 -- Returns a double whose value is equal to tonumber(x)
 function AptInt:ToNumber(): number
+	return tonumber(self:ToString()) :: number -- faster than doing math.log10 stuff and blablabla
 end
 
 -- ==================
@@ -730,7 +760,7 @@ end
 
 -- Returns a new AptInt = x, where self * 10^(BASE*amount) = x
 function AptInt:LeftShift(amount: number): AptInt
-	local result: AptInt = AptInt.clone(self)
+	local result: AptInt = self:clone()
 	
 	local tbl: {number} = result.limbs
 	
