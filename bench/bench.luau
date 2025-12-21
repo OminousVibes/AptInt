@@ -13,7 +13,7 @@ local digits: {number} = {1, 50, 100, 500, 1000, 5000, 10000, 50000, 100000}
 local function BuildRandomNum(digitCount: number): AptInt
 	local n: string = random(1, 2) == 1 and "-" or ""
 	for i = 1, digitCount do
-		n ..= tostring(random(1, 9))
+		n ..= random(1, 9)
 	end
 
 	return aptint.new(n)
@@ -27,11 +27,13 @@ local function BenchFunc(name: string, fn: (number, AptInt, AptInt) -> ()): ()
 	
 	for _: number, digitCount: number in digits do
 		local int1: AptInt = BuildRandomNum(digitCount)
-		local int2: AptInt = BuildRandomNum(isDiv and digitCount/2 or digitCount)
+		local int2: AptInt = BuildRandomNum(isDiv and digitCount/2+1 or digitCount)
 		
 		start = clock()
 		fn(digitCount, int1, int2)
 		print(`Took {clock()-start} to run {name} with {digitCount} digits`)
+		
+		task.wait(0.1)
 	end
 end
 
