@@ -23,12 +23,12 @@ end)
 ```
 
 # 💡 Benchmarks
-Note that these were done on an i7-10750H CPU @ 2.60GHz.<br/>
+Note that these were done on an i7-10750H CPU.<br/>
 The results are updated every time the performance gets improved.
 
 | Digit count | Addition | Subtraction | Multiplication | Division |
 | ---  | --- | --- | --- | --- |
-| 1 | 1μs | 1μs | 4μs | 1s |
+| 1 | 1μs | 1μs | 4μs | 6μs |
 | 50 | 1μs | 3μs | 25μs | 4μs |
 | 100 | 1μs | 7μs | 41μs | 13μs |
 | 500 | 2μs | 9μs | 515μs | 408μs |
