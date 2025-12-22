@@ -25,7 +25,7 @@ export type AptInt = setmetatable<{
 	
 	read Negate: (n: AptInt, inPlace: boolean) -> AptInt,
 
-	read ShiftLeft: (n: AptInt, limbs: number) -> AptInt,
+	read LeftShift: (n: AptInt, amount: number) -> AptInt,
 	
 	read AddRaw: (term: AptInt, term: AptInt) -> AptInt,
 	read SubtractRaw: (term: AptInt, term: AptInt) -> AptInt,
@@ -329,7 +329,6 @@ function AptInt:AddRaw(term: AptInt): AptInt
 
 	local result: AptInt = AptInt.new(tcreate(limbsToAdd, 0))
 
-	
 	--> from right to left
 	local carry: number = 0
 	for i: number = 1, limbsToAdd do
@@ -413,17 +412,24 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 		return MultiplyKaratsuba(self, factor)
 	end
 
-	local result: AptInt = AptInt.new(tcreate(0, #selflimbs))
+	local result: AptInt = AptInt.new(tcreate(#selflimbs, 0))
 	
 	-- do normal o(n^2) schoolgrade multiplication
-	for i: number, digit: number in selflimbs do
+	for i: number, factorDigit: number in factorlimbs do
 		local carry: number = 0
 		local prependedZeros: number = i - 1
+
+		if factorDigit == 0 then
+			continue
+		elseif factorDigit == 1 then
+			result = result:AddRaw(self)
+			continue
+		end
 		
 		local mulResult: AptInt = AptInt.new(tcreate(prependedZeros + #factorlimbs, 0))
 		
-		for j: number, factorDigit: number in factorlimbs do
-			local mul: number = digit * factorDigit + carry
+		for j: number, selfDigit: number in selflimbs do
+			local mul: number = selfDigit * factorDigit + carry
 			
 			if mul > BASE then
 				carry = mul // BASE
@@ -431,6 +437,7 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 			else
 				carry = 0
 			end
+			
 			mulResult.limbs[j + prependedZeros] = mul
 		end
 		
@@ -452,7 +459,7 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 		result = result:AddRaw(mulResult)
 	end
 	
-	result.signum = (self.signum ~= factor.signum and -1 or 1)
+	result.signum = (selfSign ~= factorSign and -1 or 1)
 	return result
 end
 
@@ -501,6 +508,8 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	if divisorSinglelimb then
 		Un, Vn = (self :: AptInt):clone().limbs, {divisor.limbs[1]}
 	else
+		--> TODO: we lose most performance here in MultiplyRaw
+		--> because the limb size for divisor & self is big but the limb size for D is 1
 		D = BASE // (V[n] + 1)
 		local Dint: AptInt = AptInt.new(D)
 		Vn = divisor:MultiplyRaw(Dint).limbs
