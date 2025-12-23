@@ -251,6 +251,11 @@ end
 
 local function LowerThanAbsolute(x: AptInt, y: AptInt): boolean
 	local xLimbs: {number}, yLimbs: {number} = x.limbs, y.limbs
+	
+	if #xLimbs < #yLimbs then
+		return true
+	end
+	
 	for i: number = #xLimbs, 1, -1 do
 		local xDigit: number, yDigit: number = xLimbs[i], yLimbs[i] or 0
 		if xDigit == yDigit then continue end
