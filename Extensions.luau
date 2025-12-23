@@ -4,25 +4,31 @@
 
 -- ===============================================================
 --[[ 
--- BigInteger.luau // fosterchild 2025 - Luau implementation of Java's BigInteger, with added typechecking.
+-- AptInt.luau // fosterchild 2025 - Luau implementation of Java's BigInteger, with added typechecking.
 -- Licensed under The Unlicense.
 
--- Documentation and source can be found at: https://github.com/fosterchild1/BigInteger.luau/tree/main
+-- Documentation and source can be found at: https://github.com/fosterchild1/AptInt.luau/tree/main
 --]]
 -- ===============================================================
 
--- INSPO: https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/math/BigInteger.java
+-- INSPO: https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/math/AptInt.java
 
 local AptInt = require(script.Parent)
 
 type AptInt = AptInt.AptInt
 
 export type Extensions = {
+	read zero: AptInt,
+	read one: AptInt,
+	
 	read Abs: (n: AptInt, inPlace: boolean) -> AptInt,
 	read IsEven: (n: AptInt) -> boolean,
+	read Min: (...AptInt) -> boolean,
+	read Max: (...AptInt) -> boolean,
 }
 
 AptInt.Extend(function(tbl: typeof(AptInt) | any)
+	--> Returns a new AptInt x, whose value is equal to |n|.
 	function tbl:Abs(inPlace: boolean): AptInt
 		if inPlace then
 			self.signum = -self.signum
@@ -34,8 +40,41 @@ AptInt.Extend(function(tbl: typeof(AptInt) | any)
 		return result
 	end
 	
+	--> Returns true if n is even, false otherwise.
 	function tbl:IsEven(): boolean
 		return (self :: AptInt).limbs[1] % 2 == 0
+	end
+	
+	--> Returns the minimum value among the AptInts passed into the function.
+	function tbl:Min(...: AptInt): AptInt
+		local ints: {AptInt} = {...}
+		local lowest: AptInt = ints[1]
+		
+		for i: number = 2, #ints do
+			local num: AptInt = ints[i]
+			
+			if num:LowerThanRaw(lowest) then
+				lowest = num
+			end
+		end
+		
+		return lowest:clone()
+	end
+	
+	--> Returns the maximum value among the AptInts passed into the function.
+	function tbl:Max(...: AptInt): AptInt
+		local ints: {AptInt} = {...}
+		local highest: AptInt = ints[1]
+
+		for i: number = 2, #ints do
+			local num: AptInt = ints[i]
+
+			if highest:LowerThanRaw(num) then
+				highest = num
+			end
+		end
+
+		return highest:clone()
 	end
 	
 	tbl.zero = AptInt.new()
