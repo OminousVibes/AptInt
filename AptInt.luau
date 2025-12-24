@@ -218,6 +218,8 @@ local function MultiplyKaratsuba(x: AptInt, y: AptInt): AptInt
 
 	-- (z2 × BASE ^ (m2 × 2)) + ((z1 - z2 - z0) × BASE ^ m2) + z0
 	-- since base is a power of 10, we can just prepend zeros to avoid slow exponentiation
+	-- => z0 + ((z1 - z2 - z0) << m2) + (z2 << m2 * 2)
+	
 	local result = z2:LeftShift(m2 * 2)
 		:AddRaw(
 			(z1:SubtractRaw(z2):SubtractRaw(z0)):LeftShift(m2)
@@ -280,8 +282,9 @@ end
 local function StripLeadingZeros(n: AptInt)
 	local limbs: {number} = n.limbs
 	while #limbs > 1 and limbs[#limbs] == 0 do
-		tremove(limbs, #limbs)
+		limbs[#limbs] = nil
 	end
+	
 	if #limbs == 1 and limbs[#limbs] == 0 then
 		n.signum = 0
 	end
@@ -350,6 +353,7 @@ function AptInt:AddRaw(term: AptInt): AptInt
 	local limbsToAdd: number = max(#limbsSelf, #limbsSummand)
 
 	local result: AptInt = AptInt.new(tcreate(limbsToAdd, 0))
+	local rLimbs: {number} = result.limbs
 
 	--> from right to left
 	local carry: number = 0
@@ -363,11 +367,11 @@ function AptInt:AddRaw(term: AptInt): AptInt
 			carry = 0
 		end
 		
-		result.limbs[i] = sum
+		rLimbs[i] = sum
 	end
 
 	if carry > 0 then
-		result.limbs[limbsToAdd + 1] = carry
+		rLimbs[limbsToAdd + 1] = carry
 	end
 	
 	result.signum = (if sameSign and selfSign == -1 then -1 else 1)
@@ -394,7 +398,8 @@ function AptInt:SubtractRaw(term: AptInt): AptInt
 		return (term:SubtractRaw(self)):Negate(true)
 	end
 	
-	local result: AptInt = AptInt.new()
+	local result: AptInt = AptInt.new(tcreate(#self.limbs, 0))
+	local rLimbs: {number} = result.limbs
 	
 	local limbsSubrahend: {number} = term.limbs
 
@@ -409,7 +414,7 @@ function AptInt:SubtractRaw(term: AptInt): AptInt
 			borrow = 0
 		end
 		
-		result.limbs[i] = diff
+		rLimbs[i] = diff
 	end
 	
 	StripLeadingZeros(result)
@@ -429,44 +434,56 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 	
 	local selflimbs: {number} = self.limbs
 	local factorlimbs: {number} = factor.limbs
+	local factorLen: number = #factorlimbs
 	
-	if #selflimbs > KARATSUBA_THRESHOLD and #factorlimbs > KARATSUBA_THRESHOLD then
-		return MultiplyKaratsuba(self, factor)
-	end
-
-	local result: AptInt = AptInt.new(tcreate(#selflimbs, 0))
-	
-	-- do normal o(n^2) schoolgrade multiplication
-	for i: number, factorDigit: number in factorlimbs do
-		local carry: number = 0
-		local prependedZeros: number = i - 1
-
-		if factorDigit == 0 then
-			continue
-		elseif factorDigit == 1 then
-			result = result:AddRaw(self)
-			continue
+	--> single limb multiplication
+	if factorLen == 1 then
+		local factorLimb: number = factorlimbs[1]
+		if factorLimb == 1 then 
+			return self:clone()
 		end
 		
-		for j: number, selfDigit: number in selflimbs do
-			local mul: number = selfDigit * factorDigit + carry
-			
-			if mul > BASE then
-				carry = mul // BASE
-				mul = mul % BASE
-			else
-				carry = 0
-			end
-			
-			result.limbs[j + prependedZeros] = mul
+		local result: AptInt = AptInt.new(tcreate(#selflimbs, 0))
+		local rLimbs: {number} = result.limbs
+		
+		local carry: number = 0
+		for i, limb: number in selflimbs do
+			local p: number = limb * factorLimb + carry
+			carry = p // BASE
+			rLimbs[i] = p % BASE
 		end
 		
 		if carry > 0 then
-			result.limbs[#result.limbs + 1] = carry
+			tinsert(rLimbs, carry)
 		end
+		
+		result.signum = selfSign * factorSign
+		return result
+	end
+
+	
+	if #selflimbs > KARATSUBA_THRESHOLD and factorLen > KARATSUBA_THRESHOLD then
+		return MultiplyKaratsuba(self, factor)
 	end
 	
-	result.signum = (selfSign ~= factorSign and -1 or 1)
+	--> normal o(n^2) algorithm
+	local len: number = #selflimbs + factorLen
+	local result: AptInt = AptInt.new(tcreate(len, 0))
+	
+	local carry: number = 0
+	for i: number = 1, len do
+		local sum: number = carry
+		for j: number, selfDigit: number in selflimbs do
+			local index: number = i - j + 1
+			if index < 1 or index > factorLen then continue end
+			sum += selfDigit * factorlimbs[index]
+		end
+		
+		result.limbs[i] = sum % BASE
+		carry = sum // BASE
+	end
+	
+	result.signum = selfSign * factorSign
 	return result
 end
 
@@ -515,9 +532,6 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	if divisorSinglelimb then
 		Un, Vn = (self :: AptInt):clone().limbs, {divisor.limbs[1]}
 	else
-		--> TODO: we lose most performance here in MultiplyRaw
-		--> because the limb size for divisor & self is big but the limb size for D is 1
-		--> because knuths corrects, we should choose D to be a power of 10 and then left shift using base 10
 		D = BASE // (V[n] + 1)
 		local Dint: AptInt = AptInt.new(D)
 		Vn = divisor:MultiplyRaw(Dint).limbs
@@ -528,6 +542,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	local penultimateVn: number = Vn[n-1] or 0
 
 	local quotient: AptInt = AptInt.new(tcreate(m + 1, 0))
+	local qLimbs: {number} = quotient.limbs
 	
 	--> d2. init j
 	local qhat: number, rhat: number = 0, 0
@@ -564,7 +579,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 		local carry: number = 0
 		local borrow: number = 0
 
-		for i = 1, n do
+		for i: number = 1, n do
 			local p: number = qhat * Vn[i] + carry
 			carry = p // BASE
 			local pDigit: number = p % BASE
@@ -585,11 +600,11 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 
 		--> d6. add back
 		if lastSub >= 0 then
-			quotient.limbs[j + 1] = qhat
+			qLimbs[j + 1] = qhat
 			continue
 		end
 		
-		quotient.limbs[j + 1] = qhat - 1
+		qLimbs[j + 1] = qhat - 1
 		carry = 0
 
 		for i: number = 1, n do
@@ -681,7 +696,7 @@ function AptInt:PowRaw(pow: AptInt)
 	--> CASES
 	if powSign == 0 then
 		return AptInt.new({1})
-	elseif selfSign == 0 then
+	elseif selfSign == 0 or powSign == -1 then
 		return AptInt.new()
 	end
 	
