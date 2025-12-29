@@ -35,5 +35,5 @@ The results are updated every time the performance gets improved.
 | 1,000 | 19μs | 13μs | 659μs | 353μs |
 | 5,000 | 42μs | 30μs | 10ms | 7ms |
 | 10,000 | 59μs | 74μs | 42ms | 31ms |
-| 50,000 | 258μs | 286μs | 503ms | 634ms |
-| 100,000 | 515μs | 558μs | 984ms | 2.5s |
+| 50,000 | 258μs | 243μs | 503ms | 634ms |
+| 100,000 | 515μs | 470μs | 984ms | 2.5s |
