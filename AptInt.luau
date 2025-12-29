@@ -171,14 +171,13 @@ local function GetKaratsubaLower(int: AptInt, n: number): AptInt
 		return AptInt.new({unpack(limbs, 1, n)})
 	end
 	
-	local result: AptInt = AptInt.new(tcreate(n, 0))
-	local resultlimbs: {number} = result.limbs
+	local result: {number} = tcreate(n, 0)
 	
 	for i: number = 1, n do
-		resultlimbs[i] = limbs[i]
+		result[i] = limbs[i]
 	end
 	
-	return result
+	return AptInt.new(result)
 end
 
 local function GetKaratsubaUpper(int: AptInt, n: number): AptInt
@@ -197,14 +196,13 @@ local function GetKaratsubaUpper(int: AptInt, n: number): AptInt
 		return AptInt.new(z)
 	end
 	
-	local result: AptInt = AptInt.new() -- TODO: tcreate here
-	local resultLimbs: {number} = result.limbs
+	local result: {number} = {}
 	
 	for i: number = n + 1, len do
-		tinsert(resultLimbs, limbs[i])
+		tinsert(result, limbs[i])
 	end
 	
-	return result
+	return AptInt.new(result)
 end
 
 local function MultiplyKaratsuba(x: AptInt, y: AptInt): AptInt
@@ -235,7 +233,7 @@ local function MultiplyKaratsuba(x: AptInt, y: AptInt): AptInt
 end
 
 --> divsion stuff
-local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt)
+local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt): AptInt
 	local selfSign: number, divSign: number = self.signum, divisor.signum
 	local sameSign: boolean = selfSign == divSign
 	
@@ -354,8 +352,7 @@ function AptInt:AddRaw(term: AptInt): AptInt
 	local limbsSummand: {number}, limbsSelf: {number} = term.limbs, self.limbs
 	local limbsToAdd: number = max(#limbsSelf, #limbsSummand)
 
-	local result: AptInt = AptInt.new(tcreate(limbsToAdd, 0))
-	local rLimbs: {number} = result.limbs
+	local result: {number} = tcreate(limbsToAdd, 0)
 
 	--> from right to left
 	local carry: number = 0
@@ -369,15 +366,16 @@ function AptInt:AddRaw(term: AptInt): AptInt
 			carry = 0
 		end
 		
-		rLimbs[i] = sum
+		result[i] = sum
 	end
 
 	if carry > 0 then
-		rLimbs[limbsToAdd + 1] = carry
+		result[limbsToAdd + 1] = carry
 	end
 	
-	result.signum = (if sameSign and selfSign == -1 then -1 else 1)
-	return result
+	local rAptInt: AptInt = AptInt.new(result)
+	rAptInt.signum = (if sameSign and selfSign == -1 then -1 else 1)
+	return rAptInt
 end
 
 -- Returns an AptInt, equal to <code>a - b</code>.
@@ -400,8 +398,7 @@ function AptInt:SubtractRaw(term: AptInt): AptInt
 		return (term:SubtractRaw(self)):Negate(true)
 	end
 	
-	local result: AptInt = AptInt.new(tcreate(#self.limbs, 0))
-	local rLimbs: {number} = result.limbs
+	local result: {number} = tcreate(#self.limbs, 0)
 	
 	local limbsSubrahend: {number} = term.limbs
 
@@ -416,13 +413,19 @@ function AptInt:SubtractRaw(term: AptInt): AptInt
 			borrow = 0
 		end
 		
-		rLimbs[i] = diff
+		result[i] = diff
 	end
 	
-	StripLeadingZeros(result)
+	--> StripLeadingZeros but on a table.
+	while #result > 1 and result[#result] == 0 do
+		result[#result] = nil
+	end
 	
-	result.signum = 1
-	return result
+	if #result == 1 and result[#result] == 0 then
+		return AptInt.new()
+	end
+	
+	return AptInt.new(result)
 end
 
 -- Returns an AptInt equal to <code>a * b</code>.
@@ -442,7 +445,10 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 	if factorLen == 1 then
 		local mul: number = factorlimbs[1]
 		if mul == 1 then 
-			return self:clone()
+			local result = self:clone()
+			result.signum = selfSign * factorSign
+
+			return result
 		end
 		
 		local result: AptInt = AptInt.new(tcreate(#selflimbs, 0))
@@ -472,6 +478,7 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 	--> normal o(n^2) algorithm
 	local len: number = #selflimbs + factorLen
 	local result: AptInt = AptInt.new(tcreate(len, 0))
+	local rLimbs: {number} = result.limbs
 	
 	local carry: number = 0
 	for i: number = 1, len do
@@ -482,7 +489,7 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 			sum += selfDigit * factorlimbs[index]
 		end
 		
-		result.limbs[i] = sum % BASE
+		rLimbs[i] = sum % BASE
 		carry = sum // BASE
 	end
 
