@@ -28,6 +28,7 @@ MultiplyRaw: (factor: AptInt, factor: AptInt) -> Aptint -- O(n^2) for school gra
 DivideRaw: (dividend: AptInt, divisor: AptInt) -> (AptInt, AptInt) -- O(n*m)
 ModRaw: (n: AptInt, div: AptInt) -> Aptint -- O(n*m) for regular, O(1) for powers of 2, 5 and 10
 PowRaw: (n: AptInt, pow: AptInt) -> AptInt -- O(n^1.585 * log n)
+sqrt: (n: AptInt) -> AptInt -- O(n*m log n)
 ```
 
 ### Comparison
@@ -51,6 +52,7 @@ Abs: (n: AptInt, inPlace: boolean) -> AptInt, -- O(1)
 IsEven: (n: AptInt) -> boolean, -- O(1)
 Min: (...AptInt) -> boolean, -- O(n)
 Max: (...AptInt) -> boolean, -- O(n)
+Clamp: (n: AptInt, min: AptInt, max: AptInt) -> AptInt, -- O(n)
 ```
 
 # Example Usage
