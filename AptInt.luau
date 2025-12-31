@@ -67,6 +67,7 @@ local sformat: (string, ...unknown) -> string = string.format
 -- =================
 
 local KARATSUBA_THRESHOLD: number = 45 -- in limbs, limit where karatsuba is faster than normal multiplication
+local SQRT_KARATSUBA_THRESHOLD: number = 16
 local SAFE_UNPACK_THRESHOLD: number = 8000 -- unpack() max size in limbs
 
 local MAX_LOSSLESS_POW: number = 53 -- 2^53
@@ -276,6 +277,45 @@ local function LowerThanAbsolute(x: AptInt, y: AptInt): boolean
 	end
 
 	return false 
+end
+
+local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
+	-- https://gmplib.org/manual/Square-Root-Algorithm
+	-- https://en.wikipedia.org/wiki/Integer_square_root#Karatsuba_square_root_algorithm
+	if n.signum ~= 1 then
+		return AptInt.new(), AptInt.new()
+	end
+
+	local limbLen: number = #(n :: AptInt).limbs
+	
+	local AP_ONE: AptInt = AptInt.new({1})
+
+	--> calculate a3, a2, a1 and a0.
+	local m: number = (limbLen - 1) // 4 + 1
+	local m2: number = m * 2
+
+	local a3a2: AptInt, a1a0: AptInt = GetKaratsubaUpper(n, m), GetKaratsubaLower(n, m)
+	local a1: AptInt, a0: AptInt = GetKaratsubaUpper(a1a0, m2), GetKaratsubaLower(a1a0, m2)
+
+	local s1: AptInt = a3a2:sqrt()
+	local r1: AptInt = a3a2:SubtractRaw(s1:MultiplyRaw(s1))
+	
+	--> divrem (r1*b + a1, 2*s1)
+	local numerator: AptInt = r1:LeftShift(m):AddRaw(a1) -- r1*b + a1
+	local denominator: AptInt = s1:AddRaw(s1) -- s1 * 2
+	local q, u: AptInt = numerator:DivideRaw(denominator)
+
+	--> get sqrt and correct
+	local s: AptInt = s1:LeftShift(m):AddRaw(q)
+
+	local r: AptInt = u:LeftShift(m):AddRaw(a0):SubtractRaw(q:MultiplyRaw(q))
+
+	if r.signum == -1 then
+		r = r:AddRaw(s:AddRaw(s)):SubtractRaw(AP_ONE)
+		s = s:SubtractRaw(AP_ONE)
+	end
+
+	return s, r
 end
 
 local function StripLeadingZeros(n: AptInt)
@@ -770,8 +810,13 @@ function AptInt:sqrt(): AptInt
 		return AptInt.new()
 	end
 	
+	if #(self :: AptInt).limbs >= SQRT_KARATSUBA_THRESHOLD then
+		local s, _ = KaratsubaSqrt(self)
+		return s
+	end
+	
 	local prev2: AptInt = AP_ONE:Negate(false)
-	local prev1: AptInt = GetKaratsubaLower(self, #(self :: AptInt).limbs//2+1) -- good initial guess
+	local prev1: AptInt = GetKaratsubaLower(self, #self.limbs//2+1) -- good initial guess
 	
 	while true do
 		local x1: AptInt = prev1:AddRaw(self:DivideRaw(prev1)):DivideRaw(AP_TWO)
@@ -1001,7 +1046,15 @@ AptInt.__tostring = function(n: AptInt): string
 end
 
 AptInt.__len = function(n: AptInt): number
-	return rawlen(n.limbs)
+	return #n.limbs
+end
+
+AptInt.__iter = function(n: AptInt)
+	local current: AptInt = AptInt.new({1})
+	return function()
+		current = current:AddRaw(AP_ONE)
+		return current:clone()
+	end
 end
 
 -- ===========
