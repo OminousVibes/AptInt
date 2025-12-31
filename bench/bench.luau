@@ -24,10 +24,17 @@ local function BenchFunc(name: string, fn: (AptInt, AptInt) -> ()): ()
 
 	--> division takes more the smaller the divisor is.
 	local isDiv: boolean = (name == "divBench")
+	
+	--> sqrt requires non-negative number.
+	local isSqrt: boolean = (name == "sqrtBench")
 
 	for _: number, digitCount: number in digits do
 		local int1: AptInt = BuildRandomNum(digitCount)
 		local int2: AptInt = BuildRandomNum(isDiv and digitCount/2+1 or digitCount)
+		
+		if isSqrt then
+			int1.signum = 1
+		end
 
 		start = clock()
 		fn(int1, int2)
@@ -51,4 +58,8 @@ end)
 
 BenchFunc("divBench", function(int1: AptInt, int2: AptInt)
 	int1:DivideRaw(int2)
+end)
+
+BenchFunc("sqrtBench", function(int1: AptInt, int2: AptInt)
+	int1:sqrt()
 end)
