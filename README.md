@@ -23,17 +23,17 @@ end)
 ```
 
 # 💡 Benchmarks
-Note that these were done on an i7-10750H CPU.<br/>
+Note that these were done on an i7-10750H CPU The benchmark script can be found in [/bench/](https://github.com/fosterchild1/AptInt/blob/main/bench/bench.luau).<br/>
 The results are updated every time the performance gets improved.
 
 | Digit count | Addition | Subtraction | Multiplication | Division | Square root |
 | ---  | --- | --- | --- | --- | --- |
-| 1 | 1μs | 1μs | 2μs | 6μs | 19μs |
-| 50 | 1μs | 3μs | 9μs | 24μs | 318μs |
-| 100 | 1μs | 7μs | 13μs | 31μs | 440μs |
-| 500 | 2μs | 9μs | 220μs | 114μs | 1ms |
-| 1,000 | 10μs | 13μs | 659μs | 353μs | 5ms |
-| 5,000 | 37μs | 30μs | 10ms | 7ms | 94ms |
-| 10,000 | 57μs | 74μs | 42ms | 31ms | 353ms |
-| 50,000 | 229μs | 243μs | 503ms | 634ms | 7s |
-| 100,000 | 439μs | 470μs | 984ms | 2.5s | not yet :( |
+| 1 | 1μs | 1μs | 2μs | 6μs | 7μs |
+| 50 | 1μs | 3μs | 9μs | 24μs | 40μs |
+| 100 | 1μs | 7μs | 13μs | 31μs | 322μs |
+| 500 | 2μs | 9μs | 220μs | 114μs | 737μs |
+| 1,000 | 10μs | 13μs | 659μs | 353μs | 1ms |
+| 5,000 | 37μs | 30μs | 10ms | 7ms | 5ms |
+| 10,000 | 57μs | 74μs | 42ms | 31ms | 17ms |
+| 50,000 | 229μs | 243μs | 503ms | 634ms | 291ms |
+| 100,000 | 439μs | 470μs | 984ms | 2.5s | 1s |
