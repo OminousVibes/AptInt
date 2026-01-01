@@ -67,7 +67,7 @@ local sformat: (string, ...unknown) -> string = string.format
 -- =================
 
 local KARATSUBA_THRESHOLD: number = 45 -- in limbs, limit where karatsuba is faster than normal multiplication
-local SQRT_KARATSUBA_THRESHOLD: number = 16
+local SQRT_KARATSUBA_THRESHOLD: number = 32
 local SAFE_UNPACK_THRESHOLD: number = 8000 -- unpack() max size in limbs
 
 local MAX_LOSSLESS_POW: number = 53 -- 2^53
@@ -287,7 +287,8 @@ local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
 	if n.signum ~= 1 then
 		return AptInt.new(), AptInt.new()
 	end
-
+	
+	--> normalize number so that its length is divisible by 4
 	local limbLen: number = #(n :: AptInt).limbs
 	if limbLen % 4 ~= 0 then
 		local shift: number = 4 - limbLen % 4
@@ -295,23 +296,23 @@ local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
 		limbLen += shift
 	end
 	
-	--> needed here too.
-	--[[if limbLen <= SQRT_KARATSUBA_THRESHOLD then
-		local s = n:sqrt()
+	--> needed here too
+	if limbLen < SQRT_KARATSUBA_THRESHOLD then
+		local s: AptInt = n:sqrt()
 		return s, n:SubtractRaw(s:MultiplyRaw(s))
-	end]]
+	end
 	
 	local AP_ONE: AptInt = AptInt.new({1})
 
 	--> calculate a3, a2, a1 and a0
-	local m2: number = (limbLen + 1) // 2
-	local a3a2: AptInt, a1a0: AptInt = GetKaratsubaUpper(n, m2), GetKaratsubaLower(n, m2)
+	local m: number = (limbLen+1)//4
+	local m2: number = (limbLen+1)//2
 	
-	local m: number = (#a1a0.limbs + 1) // 2
+	local a3a2: AptInt, a1a0: AptInt = GetKaratsubaUpper(n, m2), GetKaratsubaLower(n, m2)
 	local a1: AptInt, a0: AptInt = GetKaratsubaUpper(a1a0, m), GetKaratsubaLower(a1a0, m)
 	
-	local s1: AptInt = a3a2:sqrt()
-	local r1 = a3a2:SubtractRaw(s1:MultiplyRaw(s1))
+	local s1: AptInt, r1: AptInt = KaratsubaSqrt(a3a2)
+	--local r1 = a3a2:SubtractRaw(s1:MultiplyRaw(s1))
 
 	--> divrem (r1*b + a1, 2*s1)
 	local numerator: AptInt = r1:LeftShift(m):AddRaw(a1) -- r1*b + a1
@@ -357,6 +358,7 @@ function AptInt.new(num: ValidConstructor): AptInt
 end
 
 --> this is ugly
+local AP_NEG_ONE: AptInt = AptInt.new(-1)
 local AP_ZERO: AptInt = AptInt.new()
 local AP_ONE: AptInt = AptInt.new({1})
 local AP_TWO: AptInt = AptInt.new({2})
@@ -828,7 +830,7 @@ function AptInt:sqrt(): AptInt
 		return s
 	end
 
-	local prev2: AptInt = AP_ONE:Negate(false)
+	local prev2: AptInt = AP_NEG_ONE:clone()
 	local prev1: AptInt = AP_ONE:LeftShift(#self.limbs//2+1)
 
 	while true do
