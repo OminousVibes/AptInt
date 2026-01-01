@@ -20,13 +20,13 @@ export type ValidMetamethodArgument = string | number | AptInt
 export type AptInt = setmetatable<{
 	limbs: {number},
 	signum: number,
-	
+
 	read clone: (n: AptInt) -> AptInt,
-	
+
 	read Negate: (n: AptInt, inPlace: boolean) -> AptInt,
 
 	read LeftShift: (n: AptInt, amount: number) -> AptInt,
-	
+
 	read AddRaw: (term: AptInt, term: AptInt) -> AptInt,
 	read SubtractRaw: (term: AptInt, term: AptInt) -> AptInt,
 	read MultiplyRaw: (factor: AptInt, factor: AptInt) -> AptInt,
@@ -34,11 +34,11 @@ export type AptInt = setmetatable<{
 	read ModRaw: (n: AptInt, div: AptInt) -> AptInt,
 	read PowRaw: (n: AptInt, pow: AptInt) -> AptInt,
 	read sqrt: (n: AptInt) -> AptInt,
-	
+
 	read EqualsRaw: (self: AptInt, num: AptInt) -> boolean,
 	read LowerThanRaw: (self: AptInt, num: AptInt) -> boolean,
 	read LowerOrEqualToRaw: (self: AptInt, num: AptInt) -> boolean,
-	
+
 	read ToString: (n: AptInt) -> string,
 	read ToNumber: (n: AptInt) -> number,
 }, typeof(AptInt)>
@@ -81,19 +81,19 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 	["string"] = function(str: string): ({number}, number)
 		local isNegative: boolean = str:sub(1, 1) == "-"
 		local strStart: number = isNegative and 2 or 1
-		
+
 		local arr: {number} = {}
-		
+
 		local i: number = #str
 		repeat
 			local chars: string = str:sub(max(i - BASE_POW + 1, strStart), i)
 			local num: number? = tonumber(chars)
 			if not num then break end
-			
+
 			i -= BASE_POW
 			tinsert(arr, num)
 		until i < strStart
-		
+
 		return arr, (isNegative and -1 or 1)
 	end,
 
@@ -101,30 +101,30 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 		if num == 0 then
 			return {0}, 0
 		end
-		
+
 		local actualSign: number = sign(num)
 		num = abs(num)
-		
+
 		local arr: {number} = {}
 		while num > 0 do
 			tinsert(arr, floor(num % BASE))
 			num //= BASE
 		end
-		
+
 		return arr, actualSign
 	end,
-	
+
 	["table"] = function(tbl: {any}): ({number}, number)
 		local first: any = tbl[1]
 		if not first then
 			return {0}, 0
 		end
-		
+
 		--> if is faster than assert, we use if here since its called a lot of times
 		if typeof(first) ~= "number" then
 			error("attempt to create AptInt from a table with non-int values")
 		end
-		
+
 		return tbl, 1
 	end,
 
@@ -145,12 +145,12 @@ local function ArgumentToAptInt(num: ValidMetamethodArgument?, errContext: strin
 		bigint = num :: AptInt
 	else
 		local numType: string = typeof(num)
-		
+
 		assert(
 			numType ~= "table" and typeConstructors[numType] ~= nil,
 			`attempt to perform ({errContext}) on AptInt and {numType}`
 		)
-		
+
 		bigint = AptInt.new(num)
 	end
 
@@ -161,23 +161,23 @@ end
 -- will extract the 3 final limbs, giving: high=12, low=345.
 local function GetKaratsubaLower(int: AptInt, n: number): AptInt
 	local limbs: {number} = int.limbs
-	
+
 	if #limbs <= n then
 		return int:clone()
 	end
-	
+
 	--> unsure if this is faster.
 	if #limbs < SAFE_UNPACK_THRESHOLD then
 		-- table.pack is faster here but FOR SOME REASON IT INCLUDES ["N"] IN THE ARRAY TOO?!
 		return AptInt.new({unpack(limbs, 1, n)})
 	end
-	
+
 	local result: {number} = tcreate(n, 0)
-	
+
 	for i: number = 1, n do
 		result[i] = limbs[i]
 	end
-	
+
 	return AptInt.new(result)
 end
 
@@ -185,7 +185,7 @@ local function GetKaratsubaUpper(int: AptInt, n: number): AptInt
 	-- {select(unpack(x))} is faster, but unpack only works up to a certain degree.
 	local limbs: {number} = int.limbs
 	local len: number = #limbs
-	
+
 	if len <= n then
 		return AptInt.new()
 	end
@@ -196,13 +196,13 @@ local function GetKaratsubaUpper(int: AptInt, n: number): AptInt
 		local z: {number} = {select(n + 1, unpack(limbs))}
 		return AptInt.new(z)
 	end
-	
+
 	local result: {number} = {}
-	
+
 	for i: number = n + 1, len do
 		tinsert(result, limbs[i])
 	end
-	
+
 	return AptInt.new(result)
 end
 
@@ -211,7 +211,7 @@ local function MultiplyKaratsuba(x: AptInt, y: AptInt): AptInt
 
 	local low1: AptInt, low2: AptInt = GetKaratsubaLower(x, m2), GetKaratsubaLower(y, m2)
 	local high1: AptInt, high2: AptInt = GetKaratsubaUpper(x, m2), GetKaratsubaUpper(y, m2)
-	
+
 	local z0: AptInt = low1:MultiplyRaw(low2)
 	local z1: AptInt = low1:AddRaw(high1):MultiplyRaw(low2:AddRaw(high2))
 	local z2: AptInt = high1:MultiplyRaw(high2)
@@ -219,17 +219,17 @@ local function MultiplyKaratsuba(x: AptInt, y: AptInt): AptInt
 	-- (z2 × BASE ^ (m2 × 2)) + ((z1 - z2 - z0) × BASE ^ m2) + z0
 	-- since base is a power of 10, we can just prepend zeros to avoid slow exponentiation
 	-- => z0 + ((z1 - z2 - z0) << m2) + (z2 << m2 * 2)
-	
+
 	local result = z2:LeftShift(m2 * 2)
 		:AddRaw(
 			(z1:SubtractRaw(z2):SubtractRaw(z0)):LeftShift(m2)
 		)
 		:AddRaw(z0)
-	
+
 	if x.signum ~= y.signum then
 		return result:Negate(true)
 	end
-	
+
 	return result
 end
 
@@ -237,19 +237,19 @@ end
 local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt): AptInt
 	local selfSign: number, divSign: number = self.signum, divisor.signum
 	local sameSign: boolean = selfSign == divSign
-	
+
 	if sameSign then
 		if divSign == -1 then
 			return remainder:Negate(true)
 		end
-		
+
 		return remainder
 	elseif selfSign == 1 and divSign == -1 and remainder.signum ~= 0 then
 		return divisor:AddRaw(remainder)
 	elseif remainder.signum ~= 0 then
 		return divisor:SubtractRaw(remainder)
 	end
-	
+
 	return remainder
 end
 
@@ -258,17 +258,17 @@ local function TryModExp(limb: number, div: number, base: number): (boolean, num
 	if log ~= floor(log) or log > BASE_POW then -- log > BASE_POW since each power we check 1 more digit
 		return false, 0
 	end	
-	
+
 	return true, limb % div
 end
 
 local function LowerThanAbsolute(x: AptInt, y: AptInt): boolean
 	local xLimbs: {number}, yLimbs: {number} = x.limbs, y.limbs
-	
+
 	if #xLimbs < #yLimbs then
 		return true
 	end
-	
+
 	for i: number = #xLimbs, 1, -1 do
 		local xDigit: number, yDigit: number = xLimbs[i], yLimbs[i] or 0
 		if xDigit == yDigit then continue end
@@ -280,6 +280,8 @@ local function LowerThanAbsolute(x: AptInt, y: AptInt): boolean
 end
 
 local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
+	--> NOTE: even tho we dont have burnikel-ziegler division, this is still faster by ~2.5x 
+	
 	-- https://gmplib.org/manual/Square-Root-Algorithm
 	-- https://en.wikipedia.org/wiki/Integer_square_root#Karatsuba_square_root_algorithm
 	if n.signum ~= 1 then
@@ -287,28 +289,39 @@ local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
 	end
 
 	local limbLen: number = #(n :: AptInt).limbs
+	if limbLen % 4 ~= 0 then
+		local shift: number = 4 - limbLen % 4
+		n = n:LeftShift(shift)
+		limbLen += shift
+	end
+	
+	--> needed here too.
+	--[[if limbLen <= SQRT_KARATSUBA_THRESHOLD then
+		local s = n:sqrt()
+		return s, n:SubtractRaw(s:MultiplyRaw(s))
+	end]]
 	
 	local AP_ONE: AptInt = AptInt.new({1})
 
-	--> calculate a3, a2, a1 and a0.
-	local m: number = (limbLen - 1) // 4 + 1
-	local m2: number = m * 2
-
-	local a3a2: AptInt, a1a0: AptInt = GetKaratsubaUpper(n, m), GetKaratsubaLower(n, m)
-	local a1: AptInt, a0: AptInt = GetKaratsubaUpper(a1a0, m2), GetKaratsubaLower(a1a0, m2)
-
-	local s1: AptInt = a3a2:sqrt()
-	local r1: AptInt = a3a2:SubtractRaw(s1:MultiplyRaw(s1))
+	--> calculate a3, a2, a1 and a0
+	local m2: number = (limbLen + 1) // 2
+	local a3a2: AptInt, a1a0: AptInt = GetKaratsubaUpper(n, m2), GetKaratsubaLower(n, m2)
 	
+	local m: number = (#a1a0.limbs + 1) // 2
+	local a1: AptInt, a0: AptInt = GetKaratsubaUpper(a1a0, m), GetKaratsubaLower(a1a0, m)
+	
+	local s1: AptInt = a3a2:sqrt()
+	local r1 = a3a2:SubtractRaw(s1:MultiplyRaw(s1))
+
 	--> divrem (r1*b + a1, 2*s1)
 	local numerator: AptInt = r1:LeftShift(m):AddRaw(a1) -- r1*b + a1
 	local denominator: AptInt = s1:AddRaw(s1) -- s1 * 2
 	local q, u: AptInt = numerator:DivideRaw(denominator)
 
 	--> get sqrt and correct
-	local s: AptInt = s1:LeftShift(m):AddRaw(q)
+	local s: AptInt = s1:LeftShift(m):AddRaw(q) -- s=s1*b+q
 
-	local r: AptInt = u:LeftShift(m):AddRaw(a0):SubtractRaw(q:MultiplyRaw(q))
+	local r: AptInt = u:LeftShift(m):AddRaw(a0):SubtractRaw(q:MultiplyRaw(q)) -- r=u*b+a0-q^2
 
 	if r.signum == -1 then
 		r = r:AddRaw(s:AddRaw(s)):SubtractRaw(AP_ONE)
@@ -323,7 +336,7 @@ local function StripLeadingZeros(n: AptInt)
 	while #limbs > 1 and limbs[#limbs] == 0 do
 		limbs[#limbs] = nil
 	end
-	
+
 	if #limbs == 1 and limbs[#limbs] == 0 then
 		n.signum = 0
 	end
@@ -336,7 +349,7 @@ end
 -- Returns a new AptInt from the given argument.
 function AptInt.new(num: ValidConstructor): AptInt
 	local limbs: {number}, signum: number = typeConstructors[typeof(num)](num)
-	
+
 	return setmetatable({
 		limbs = limbs,
 		signum = signum
@@ -362,10 +375,10 @@ function AptInt:Negate(inPlace: boolean): AptInt
 		self.signum = -self.signum
 		return self
 	end
-	
+
 	local result: AptInt = self:clone()
 	result.signum = -result.signum
-	
+
 	return result
 end
 
@@ -377,7 +390,7 @@ end
 function AptInt:AddRaw(term: AptInt): AptInt
 	local selfSign: number, summandSign: number = self.signum, term.signum
 	local sameSign: boolean = selfSign == summandSign
-	
+
 	--> CASES
 	if summandSign == 0 then
 		return self:clone()
@@ -388,7 +401,7 @@ function AptInt:AddRaw(term: AptInt): AptInt
 	elseif not sameSign then -- +a+(-b)=a-b
 		return self:SubtractRaw(term:Negate(false))
 	end
-	
+
 	local summandLimbs: {number}, selfLimbs: {number} = term.limbs, self.limbs
 	if #selfLimbs < #summandLimbs then
 		selfLimbs, summandLimbs =  summandLimbs, selfLimbs
@@ -400,21 +413,21 @@ function AptInt:AddRaw(term: AptInt): AptInt
 	local carry: number = 0
 	for i: number, selfDigit: number in selfLimbs do
 		local sum: number = selfDigit + (summandLimbs[i] or 0) + carry
-		
+
 		if sum >= BASE then
 			carry = 1
 			sum = sum - BASE
 		else
 			carry = 0
 		end
-		
+
 		result[i] = sum
 	end
 
 	if carry > 0 then
 		result[#result + 1] = carry
 	end
-	
+
 	local rAptInt: AptInt = AptInt.new(result)
 	rAptInt.signum = (if sameSign and selfSign == -1 then -1 else 1)
 	return rAptInt
@@ -424,7 +437,7 @@ end
 function AptInt:SubtractRaw(term: AptInt): AptInt
 	local selfSign: number, termSign: number = self.signum, term.signum
 	local sameSign: boolean = (selfSign == termSign)
-	
+
 	--> CASES
 	if termSign == 0 then -- b - 0 = 0
 		return self:clone()
@@ -435,13 +448,13 @@ function AptInt:SubtractRaw(term: AptInt): AptInt
 	elseif sameSign and selfSign == -1 then -- (-a-(-b)) = b-a
 		return (self:Negate(false):SubtractRaw(term:Negate(false))):Negate(true)
 	end
-	
+
 	if self:LowerThanRaw(term) then
 		return (term:SubtractRaw(self)):Negate(true)
 	end
-	
+
 	local result: {number} = tcreate(#self.limbs, 0)
-	
+
 	local limbsSubrahend: {number} = term.limbs
 
 	--> from right to left
@@ -454,35 +467,35 @@ function AptInt:SubtractRaw(term: AptInt): AptInt
 		else
 			borrow = 0
 		end
-		
+
 		result[i] = diff
 	end
-	
+
 	--> StripLeadingZeros but on a table.
 	while #result > 1 and result[#result] == 0 do
 		result[#result] = nil
 	end
-	
+
 	if #result == 1 and result[#result] == 0 then
 		return AptInt.new()
 	end
-	
+
 	return AptInt.new(result)
 end
 
 -- Returns an AptInt equal to <code>a * b</code>.
 function AptInt:MultiplyRaw(factor: AptInt): AptInt
 	local selfSign: number, factorSign: number = self.signum, factor.signum
-	
+
 	--> CASES
 	if selfSign == 0 or factorSign == 0 then
 		return AptInt.new()
 	end
-	
+
 	local selflimbs: {number} = self.limbs
 	local factorlimbs: {number} = factor.limbs
 	local factorLen: number = #factorlimbs
-	
+
 	--> single limb multiplication
 	if factorLen == 1 then
 		local mul: number = factorlimbs[1]
@@ -492,36 +505,36 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 
 			return result
 		end
-		
+
 		local result: AptInt = AptInt.new(tcreate(#selflimbs, 0))
 		local rLimbs: {number} = result.limbs
-		
+
 		local carry: number = 0
 		for i: number, limb: number in selflimbs do
 			local p: number = limb * mul + carry
-			
+
 			carry = p // BASE
 			rLimbs[i] = p % BASE
 		end
-		
+
 		if carry > 0 then
 			tinsert(rLimbs, carry)
 		end
-		
+
 		result.signum = selfSign * factorSign
 		return result
 	end
 
-	
+
 	if #selflimbs > KARATSUBA_THRESHOLD and factorLen > KARATSUBA_THRESHOLD then
 		return MultiplyKaratsuba(self, factor)
 	end
-	
+
 	--> normal o(n^2) algorithm
 	local len: number = #selflimbs + factorLen
 	local result: AptInt = AptInt.new(tcreate(len, 0))
 	local rLimbs: {number} = result.limbs
-	
+
 	local carry: number = 0
 	for i: number = 1, len do
 		local sum: number = carry
@@ -530,7 +543,7 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 			if index < 1 or index > factorLen then continue end
 			sum += selfDigit * factorlimbs[index]
 		end
-		
+
 		rLimbs[i] = sum % BASE
 		carry = sum // BASE
 	end
@@ -543,10 +556,10 @@ end
 -- Returns the quotient and remainder of a / b.
 function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	--> we use knuths algorithm D for division
-	
+
 	local divSign: number, selfSign: number = divisor.signum, self.signum
 	local sameSign: boolean = divSign == selfSign
-	
+
 	--> CASES (oh dear..)
 	--> TODO: refactor
 	if divSign == 0 or selfSign == 0 then -- dividing by 0
@@ -559,75 +572,75 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 		elseif sameSign and divSign == -1 then
 			return AptInt.new(), self:clone()
 		end
-		
+
 		return AptInt.new(), self:clone()
 	elseif self:EqualsRaw(divisor) then -- dividing x/x = 1
 		return AptInt.new({1}), AptInt.new()
 	elseif self:Negate(false):EqualsRaw(divisor) or self:EqualsRaw(divisor:Negate(false)) then -- -x/x = -1
 		return AptInt.new({-1}), AptInt.new()
 	end
-	
+
 	local U: {number}, V: {number} = self.limbs, divisor.limbs
-	
+
 	--> single limb division
 	if #V == 1 then
 		local div: number = V[1]
 		if div == 1 then
 			local result = self:clone()
 			result.signum = selfSign / divSign
-			
+
 			return result, AptInt.new()
 		end
-		
+
 		local quotient: AptInt = AptInt.new(tcreate(#U - 1, 0))
 		local qLimbs: {number} = quotient.limbs
-		
+
 		local carry: number = 0
 		for i: number = #U, 1, -1 do
 			local x: number = U[i] + carry * BASE
 			local qDigit: number = x // div
-			
+
 			carry = x - qDigit * div
 			qLimbs[i] = qDigit
 		end
-		
+
 		quotient.signum = selfSign / divSign
 		StripLeadingZeros(quotient)
-		
+
 		return quotient, AptInt.new({carry})
 	end
-	
+
 	--> d0. defs
 	local n: number = #V
 	local m: number = #U - n
-	
+
 	--> d1. normalize (get Vn and Un)
 	local D: number = BASE // (V[n] + 1)
 	local Dint: AptInt = AptInt.new(D)
-	
+
 	local Vn: {number} = divisor:MultiplyRaw(Dint).limbs
 	local Un: {number} = (self :: AptInt):MultiplyRaw(Dint).limbs
-	
+
 	local Vnn: number = Vn[n]
 	local penultimateVn: number = Vn[n-1] or 0
 
 	local quotient: AptInt = AptInt.new(tcreate(m + 1, 0))
 	local qLimbs: {number} = quotient.limbs
-	
+
 	--> d2. init j
 	local qhat: number, rhat: number = 0, 0
 	for j: number = m, 0, -1 do
 		--> d3. calculate qhat and rhat
-		
+
 		-- bigints for qhat and rhat are not needed, because un[x] is at most BASE
 		-- currently, BASE * BASE + BASE < 2^53
 		local nPlusJ: number = n + j + 1
 		local top: number = (Un[nPlusJ] or 0) * BASE + (Un[nPlusJ - 1] or 0)
 		qhat = top // Vnn
 		rhat = top % Vnn
-		
+
 		if qhat == 0 then continue end
-		
+
 		--> first correction
 		if qhat * penultimateVn > rhat * BASE + (Un[nPlusJ - 2] or 0) then
 			qhat -= 1
@@ -647,18 +660,18 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 			local p: number = qhat * Vn[i] + carry
 			carry = p // BASE
 			local pDigit: number = p % BASE
-			
+
 			local diff: number = Un[i + j] - pDigit - borrow
 			if diff < 0 then
 				borrow = 1
 				Un[i + j] = diff + BASE
 				continue
 			end
-			
+
 			Un[i + j] = diff
 			borrow = 0
 		end
-		
+
 		local lastSub: number = (Un[nPlusJ] or 0) - carry - borrow
 		Un[nPlusJ] = lastSub
 
@@ -667,7 +680,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 			qLimbs[j + 1] = qhat
 			continue
 		end
-		
+
 		qLimbs[j + 1] = qhat - 1
 		carry = 0
 
@@ -686,9 +699,9 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 
 		Un[nPlusJ] = (Un[nPlusJ] + carry) % BASE
 	end
-	
+
 	local remainder: AptInt = AptInt.new(Un)
-	
+
 	--> d8. unnormalize
 	local carry: number = 0
 	local rmLimbs: {number} = remainder.limbs
@@ -697,16 +710,16 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 		rmLimbs[i] = x // D :: number
 		carry = x % D :: number
 	end
-	
+
 	StripLeadingZeros(remainder)
 	StripLeadingZeros(quotient)
-	
+
 	--> return
 	remainder = CorrectRemainder(self, divisor, remainder)
 	if not sameSign then
 		quotient:Negate(true)
 	end
-	
+
 	return quotient, remainder
 end
 
@@ -729,23 +742,23 @@ function AptInt:ModRaw(div: AptInt): AptInt
 		local _: AptInt, r: AptInt = self:DivideRaw(div)
 		return r
 	end
-	
+
 	--> single limb divisor optimizations
 	-- we check trymodexp which is expensive and uses math.log.
 	-- performance difference shouldnt matter that much, since
 	-- single limb division already is insanely fast,
 	-- but since we check once for each number, it adds up
-	
+
 	--> TODO: add argument that disables this modexp
 	local success: boolean, mod: number = TryModExp(selfFirst, divFirst, 2) -- 2
 	if success then return AptInt.new({mod}) end
-	
+
 	success, mod = TryModExp(selfFirst, divFirst, 5) -- 5
 	if success then return AptInt.new({mod}) end
-	
+
 	success, mod =  TryModExp(selfFirst, divFirst, 10) -- 10
 	if success then return AptInt.new({mod}) end
-	
+
 	local _: AptInt, r: AptInt = self:DivideRaw(div)
 	return r
 end
@@ -754,23 +767,23 @@ end
 function AptInt:PowRaw(pow: AptInt)
 	local selfSign: number, powSign: number = self.signum, pow.signum
 	local selfLimbs: {number}, powLimbs: {number} = self.limbs, pow.limbs
-	
+
 	--> CASES
 	if powSign == 0 then
 		return AptInt.new({1})
 	elseif selfSign == 0 or powSign == -1 then
 		return AptInt.new()
 	end
-	
+
 	if #powLimbs == 1 and powLimbs[1] == 1 then
 		return self:clone()
 	elseif #selfLimbs == 1 and selfLimbs[1] == 1 then
 		return AP_ONE:clone()
 	end
-	
+
 	local result: AptInt = AP_ONE:clone()
 	local selfClone: AptInt = self:clone()
-	
+
 	--> single-limb exponentiation
 	if #powLimbs == 1 then
 		local n: number = powLimbs[1]
@@ -778,61 +791,62 @@ function AptInt:PowRaw(pow: AptInt)
 			if n % 2 ~= 0 then
 				result = selfClone:MultiplyRaw(result)
 			end
-			
+
 			selfClone = selfClone:MultiplyRaw(selfClone)
 			n //= 2
 		end
-		
+
 		return result
 	end
-	
+
 	--> exponentiation by squaring
 	local powClone: AptInt = pow:clone()
-	
+
 	while AP_ZERO:LowerThanRaw(result) do
 		if powClone.limbs[1] % 2 ~= 0 then
 			result = selfClone:MultiplyRaw(result)
 			--powClone = powClone:SubtractRaw(AP_ONE)
 		end
-		
+
 		selfClone = selfClone:MultiplyRaw(selfClone)
 		powClone = powClone:DivideRaw(AP_TWO)
 	end
-	
+
 	return result
 end
 
 -- Returns a new AptInt equal to sqrt(a).
 function AptInt:sqrt(): AptInt
 	--> we compute the isqrt via Newton-Heron iteration
-	
+
 	if self.signum ~= 1 then
 		return AptInt.new()
 	end
-	
+
 	if #(self :: AptInt).limbs >= SQRT_KARATSUBA_THRESHOLD then
 		local s, _ = KaratsubaSqrt(self)
 		return s
 	end
-	
+
 	local prev2: AptInt = AP_ONE:Negate(false)
-	local prev1: AptInt = GetKaratsubaLower(self, #self.limbs//2+1) -- good initial guess
-	
+	local prev1: AptInt = AP_ONE:LeftShift(#self.limbs//2+1)
+
 	while true do
 		local x1: AptInt = prev1:AddRaw(self:DivideRaw(prev1)):DivideRaw(AP_TWO)
-		
+
 		local equals: boolean = x1:EqualsRaw(prev1)
 		if equals then
 			return x1
 		end
-		
+
 		if x1:EqualsRaw(prev2) and not equals then
 			return (x1:LowerThanRaw(prev1) and x1 or prev1) -- min(x1, prev1)
 		end
-		
+
 		prev2, prev1 = prev1, x1
 	end
 end
+
 
 -- ==================
 --> QoL FUNCTIONS
@@ -844,12 +858,12 @@ function AptInt:ToString(): string
 	if self.signum == 0 then
 		return "0"
 	end
-	
+
 	local limbs: {number} = self.limbs
 	str ..=limbs[#limbs]
-	
+
 	local formatStr: string = `%0{BASE_POW}d`
-	
+
 	--> from left to right
 	for i: number = #limbs - 1, 1, -1 do
 		str ..= sformat(formatStr, limbs[i]) -- prepend dem zeros
@@ -873,13 +887,13 @@ function AptInt:EqualsRaw(num: AptInt): boolean
 	if (#(self :: AptInt).limbs ~= #numLimbs) or (self.signum ~= num.signum) then
 		return false
 	end
-	
+
 	for i: number, selfDigit: number in self.limbs do
 		if selfDigit ~= numLimbs[i] then
 			return false
 		end
 	end
-	
+
 	return true
 end
 
@@ -887,12 +901,12 @@ end
 function AptInt:LowerThanRaw(num: AptInt): boolean
 	local selfSign: number, numSign: number = self.signum, num.signum
 	local selfLen: number, numLen: number = #self.limbs, #num.limbs
-	
+
 	--> check sign
 	if selfSign < numSign then
 		return true
 	end
-	
+
 	local bothNegative: boolean = (selfSign == numSign and selfSign == -1)
 	--> check their lengths. for negative, the lowest is with the most limbs, and for positive its the lowest
 	if bothNegative and selfLen > numLen then
@@ -900,16 +914,16 @@ function AptInt:LowerThanRaw(num: AptInt): boolean
 	elseif selfLen < numLen then -- both positive
 		return true
 	end
-	
+
 	local selflimbs: {number}, numlimbs: {number} = self.limbs, num.limbs
 	for i: number = #selflimbs, 1, -1 do
 		local sDigit: number, nDigit: number = selflimbs[i], numlimbs[i] or 0
 		if sDigit == nDigit then continue end
-		
+
 		if bothNegative then
 			return sDigit > nDigit
 		end
-		
+
 		return sDigit < nDigit
 	end
 
@@ -945,7 +959,7 @@ function AptInt:LowerOrEqualToRaw(num: AptInt): boolean
 
 		return sDigit <= nDigit
 	end
-	
+
 	return true 
 end
 
@@ -956,13 +970,13 @@ end
 -- Returns a new AptInt equal to <code>n * 10<sup>(BASE * amount)</sup></code>
 function AptInt:LeftShift(amount: number): AptInt
 	local result: AptInt = self:clone()
-	
+
 	local tbl: {number} = result.limbs
-	
+
 	for i: number = 1, amount do
 		tinsert(tbl, 1, 0)
 	end
-	
+
 	return result
 end
 
@@ -972,14 +986,14 @@ end
 
 AptInt.__unm = function(num: ValidMetamethodArgument): AptInt
 	local bigint: AptInt = ArgumentToAptInt(num, "unm")
-	
+
 	return bigint:Negate(false)
 end
 
 AptInt.__add = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): AptInt
 	local term1: AptInt = ArgumentToAptInt(a, "add")
 	local term2: AptInt = ArgumentToAptInt(b, "add")
-	
+
 	return term1:AddRaw(term2)
 end
 
@@ -1000,7 +1014,7 @@ end
 local function divMeta(a: ValidMetamethodArgument, b: ValidMetamethodArgument): AptInt
 	local term1: AptInt = ArgumentToAptInt(a, "div")
 	local term2: AptInt = ArgumentToAptInt(b, "div")
-	
+
 	local quotient: AptInt, _: AptInt = term1:DivideRaw(term2)
 	return quotient
 end
@@ -1023,14 +1037,14 @@ end
 AptInt.__eq = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): boolean
 	local term1: AptInt = ArgumentToAptInt(a, "eq")
 	local term2: AptInt = ArgumentToAptInt(b, "eq")
-	
+
 	return term1:EqualsRaw(term2)
 end
 
 AptInt.__lt = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): boolean
 	local term1: AptInt = ArgumentToAptInt(a, "lt")
 	local term2: AptInt = ArgumentToAptInt(b, "lt")
-	
+
 	return term1:LowerThanRaw(term2)
 end
 
