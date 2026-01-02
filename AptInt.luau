@@ -26,6 +26,7 @@ export type AptInt = setmetatable<{
 	read Negate: (n: AptInt, inPlace: boolean) -> AptInt,
 
 	read LeftShift: (n: AptInt, amount: number) -> AptInt,
+	read RightShift: (n: AptInt, amount: number) -> AptInt,
 
 	read AddRaw: (term: AptInt, term: AptInt) -> AptInt,
 	read SubtractRaw: (term: AptInt, term: AptInt) -> AptInt,
@@ -75,6 +76,11 @@ local MAX_LOSSLESS_INT: number = 2^MAX_LOSSLESS_POW-1
 
 local BASE_POW: number = 7 -- MUST SATISFY: 10^((BASE_POW+1) * 2) < 2^53, because of multiplyraw and divideraw
 local BASE: number = 10 ^ BASE_POW
+
+local AP_NEG_ONE: AptInt
+local AP_ZERO: AptInt
+local AP_ONE: AptInt
+local AP_TWO: AptInt
 
 --> CONSTRUCTOR
 local typeConstructors: {[string]: (any) -> ({number}, number)} = {
@@ -279,8 +285,30 @@ local function LowerThanAbsolute(x: AptInt, y: AptInt): boolean
 	return false 
 end
 
+--> SQRT STUFF
+local function NewtonHeronSqrt(n: AptInt): AptInt
+	local prev2: AptInt = AP_NEG_ONE:clone()
+	local prev1: AptInt = AP_ONE:LeftShift(#n.limbs//2+1)
+
+	while true do
+		local q: AptInt, _: AptInt = n:DivideRaw(prev1)
+		local x1: AptInt = prev1:AddRaw(q):DivideRaw(AP_TWO)
+
+		local equals: boolean = x1:EqualsRaw(prev1)
+		if equals then
+			return x1
+		end
+
+		if x1:EqualsRaw(prev2) and not equals then
+			return (x1:LowerThanRaw(prev1) and x1 or prev1) -- min(x1, prev1)
+		end
+
+		prev2, prev1 = prev1, x1
+	end
+end
+
 local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
-	--> NOTE: even tho we dont have burnikel-ziegler division, this is still faster by ~2.5x 
+	--> NOTE: even tho we dont have burnikel-ziegler division, this is still faster by a ton
 	
 	-- https://gmplib.org/manual/Square-Root-Algorithm
 	-- https://en.wikipedia.org/wiki/Integer_square_root#Karatsuba_square_root_algorithm
@@ -288,47 +316,44 @@ local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
 		return AptInt.new(), AptInt.new()
 	end
 	
-	--> normalize number so that its length is divisible by 4
-	local limbLen: number = #(n :: AptInt).limbs
-	if limbLen % 4 ~= 0 then
-		local shift: number = 4 - limbLen % 4
-		n = n:LeftShift(shift)
-		limbLen += shift
-	end
-	
 	--> needed here too
+	local limbLen: number = #n.limbs
 	if limbLen < SQRT_KARATSUBA_THRESHOLD then
-		local s: AptInt = n:sqrt()
-		return s, n:SubtractRaw(s:MultiplyRaw(s))
+		local sq = NewtonHeronSqrt(n)
+		return sq, n:SubtractRaw(sq:MultiplyRaw(sq))
 	end
 	
-	local AP_ONE: AptInt = AptInt.new({1})
-
+	--> split must be even
+	if limbLen % 2 ~= 0 then
+		limbLen += 1
+	end
+	
 	--> calculate a3, a2, a1 and a0
-	local m: number = (limbLen+1)//4
-	local m2: number = (limbLen+1)//2
+	local m2: number = ceil(limbLen / 2)
+	if m2 % 2 ~= 0 then m2 += 1 end -- split must be even
+	local m: number = m2 / 2
 	
 	local a3a2: AptInt, a1a0: AptInt = GetKaratsubaUpper(n, m2), GetKaratsubaLower(n, m2)
 	local a1: AptInt, a0: AptInt = GetKaratsubaUpper(a1a0, m), GetKaratsubaLower(a1a0, m)
 	
 	local s1: AptInt, r1: AptInt = KaratsubaSqrt(a3a2)
 	--local r1 = a3a2:SubtractRaw(s1:MultiplyRaw(s1))
-
+	
 	--> divrem (r1*b + a1, 2*s1)
-	local numerator: AptInt = r1:LeftShift(m):AddRaw(a1) -- r1*b + a1
-	local denominator: AptInt = s1:AddRaw(s1) -- s1 * 2
-	local q, u: AptInt = numerator:DivideRaw(denominator)
+	local q, u: AptInt = 
+		r1:LeftShift(m):AddRaw(a1)
+		:DivideRaw(s1:AddRaw(s1))
 
 	--> get sqrt and correct
 	local s: AptInt = s1:LeftShift(m):AddRaw(q) -- s=s1*b+q
 
-	local r: AptInt = u:LeftShift(m):AddRaw(a0):SubtractRaw(q:MultiplyRaw(q)) -- r=u*b+a0-q^2
-
+	local r: AptInt = n:SubtractRaw(s:MultiplyRaw(s))
+	
 	if r.signum == -1 then
 		r = r:AddRaw(s:AddRaw(s)):SubtractRaw(AP_ONE)
 		s = s:SubtractRaw(AP_ONE)
 	end
-
+	
 	return s, r
 end
 
@@ -358,10 +383,10 @@ function AptInt.new(num: ValidConstructor): AptInt
 end
 
 --> this is ugly
-local AP_NEG_ONE: AptInt = AptInt.new(-1)
-local AP_ZERO: AptInt = AptInt.new()
-local AP_ONE: AptInt = AptInt.new({1})
-local AP_TWO: AptInt = AptInt.new({2})
+AP_NEG_ONE = AptInt.new(-1)
+AP_ZERO = AptInt.new()
+AP_ONE = AptInt.new({1})
+AP_TWO = AptInt.new({2})
 
 -- Returns a copy of the AptInt.
 function AptInt.clone(n: AptInt): AptInt
@@ -725,7 +750,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	return quotient, remainder
 end
 
--- Returns the remainder of <code>a / b</code>.
+-- Returns a new AptInt equal to <code>a % b</code>.
 function AptInt:ModRaw(div: AptInt): AptInt
 	--> TODO: THIS IS REAAAAALLY UGLY.
 	local divLimbs: {number} = div.limbs
@@ -817,38 +842,22 @@ function AptInt:PowRaw(pow: AptInt)
 	return result
 end
 
--- Returns a new AptInt equal to sqrt(a).
+-- Returns a new AptInt equal to <code>sqrt(n)</code>.
 function AptInt:sqrt(): AptInt
-	--> we compute the isqrt via Newton-Heron iteration
+	--> we compute the isqrt via Newton-Heron iteration for small numbers
+	--> for big numbers, we use karatsuba square root algorithm
 
 	if self.signum ~= 1 then
 		return AptInt.new()
 	end
-
+	
 	if #(self :: AptInt).limbs >= SQRT_KARATSUBA_THRESHOLD then
 		local s, _ = KaratsubaSqrt(self)
 		return s
 	end
-
-	local prev2: AptInt = AP_NEG_ONE:clone()
-	local prev1: AptInt = AP_ONE:LeftShift(#self.limbs//2+1)
-
-	while true do
-		local x1: AptInt = prev1:AddRaw(self:DivideRaw(prev1)):DivideRaw(AP_TWO)
-
-		local equals: boolean = x1:EqualsRaw(prev1)
-		if equals then
-			return x1
-		end
-
-		if x1:EqualsRaw(prev2) and not equals then
-			return (x1:LowerThanRaw(prev1) and x1 or prev1) -- min(x1, prev1)
-		end
-
-		prev2, prev1 = prev1, x1
-	end
+	
+	return NewtonHeronSqrt(self)
 end
-
 
 -- ==================
 --> QoL FUNCTIONS
@@ -982,6 +991,20 @@ function AptInt:LeftShift(amount: number): AptInt
 	return result
 end
 
+-- Returns a new AptInt equal to <code>n // 10<sup>(BASE * amount)</sup></code>
+function AptInt:RightShift(amount: number): AptInt
+	local result: AptInt = self:clone()
+
+	local tbl: {number} = result.limbs
+
+	for i: number = 1, amount do
+		tremove(tbl, 1)
+	end
+
+	return result
+end
+
+
 -- ============
 --> METAMETHODS
 -- ============
@@ -1063,14 +1086,6 @@ end
 
 AptInt.__len = function(n: AptInt): number
 	return #n.limbs
-end
-
-AptInt.__iter = function(n: AptInt)
-	local current: AptInt = AptInt.new({1})
-	return function()
-		current = current:AddRaw(AP_ONE)
-		return current:clone()
-	end
 end
 
 -- ===========
