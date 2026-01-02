@@ -14,7 +14,7 @@
 local AptInt = {}
 AptInt.__index = AptInt
 
-export type ValidConstructor = string | number | AptInt | {number} | nil
+export type ValidConstructor = string | number | {number} | nil
 export type ValidMetamethodArgument = string | number | AptInt
 
 export type AptInt = setmetatable<{
@@ -359,8 +359,11 @@ end
 
 local function StripLeadingZeros(n: AptInt)
 	local limbs: {number} = n.limbs
-	while #limbs > 1 and limbs[#limbs] == 0 do
-		limbs[#limbs] = nil
+	while true do
+		local limbLen: number = #limbs
+		if limbLen == 1 or limbs[limbLen] ~= 0 then break end
+		
+		limbs[limbLen] = nil
 	end
 
 	if #limbs == 1 and limbs[#limbs] == 0 then
