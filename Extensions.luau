@@ -11,11 +11,7 @@
 --]]
 -- ===============================================================
 
--- INSPO: https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/math/AptInt.java
-
 local AptInt = require(script.Parent)
-
-local abs: (number) -> number = math.abs
 
 type AptInt = AptInt.AptInt
 
@@ -28,10 +24,19 @@ export type Extensions = {
 	read Min: (...AptInt) -> boolean,
 	read Max: (...AptInt) -> boolean,
 	read Clamp: (n: AptInt, min: AptInt, max: AptInt) -> AptInt,
+	read ModPow: (n: AptInt, mod: AptInt, exp: AptInt) -> AptInt,
 }
 
+local bband: (number, number) -> number = bit32.band
+local brshift: (number, number) -> number = bit32.rshift
+
+local abs: (number) -> number = math.abs
+
+local AP_TW0: AptInt = AptInt.new({2})
+local AP_ONE: AptInt = AptInt.new({1})
+
 AptInt.Extend(function(tbl: typeof(AptInt) | any)
-	--> Returns a new AptInt equal to <code>|n|</code>.
+	-->Returns a new AptInt equal to <code>|n|</code>.
 	function tbl:Abs(inPlace: boolean): AptInt
 		if inPlace then
 			self.signum = abs(self.signum)
@@ -43,12 +48,12 @@ AptInt.Extend(function(tbl: typeof(AptInt) | any)
 		return result
 	end
 	
-	--> Returns <code>true</code> if <code>n</code> is even.
+	-- Returns <code>true</code> if <code>n</code> is even.
 	function tbl:IsEven(): boolean
 		return (self :: AptInt).limbs[1] % 2 == 0
 	end
 	
-	--> Returns the minimum value among the AptInts passed into the function.
+	-- Returns the minimum value among the AptInts passed into the function.
 	function tbl:Min(...: AptInt): AptInt
 		local ints: {AptInt} = {...}
 		local lowest: AptInt = ints[1]
@@ -64,7 +69,7 @@ AptInt.Extend(function(tbl: typeof(AptInt) | any)
 		return lowest:clone()
 	end
 	
-	--> Returns the maximum value among the AptInts passed into the function.
+	-- Returns the maximum value among the AptInts passed into the function.
 	function tbl:Max(...: AptInt): AptInt
 		local ints: {AptInt} = {...}
 		local highest: AptInt = ints[1]
@@ -80,7 +85,7 @@ AptInt.Extend(function(tbl: typeof(AptInt) | any)
 		return highest:clone()
 	end
 	
-	--> Returns an AptInt between <code>min</code> and <code>max</code>, inclusive.
+	-- Returns an AptInt between <code>min</code> and <code>max</code>, inclusive.
 	function tbl:Clamp(min: AptInt, max: AptInt): AptInt
 		if self:LowerThanRaw(min) then
 			return min:clone()
@@ -89,6 +94,40 @@ AptInt.Extend(function(tbl: typeof(AptInt) | any)
 		end
 		
 		return self:clone()
+	end
+	
+	-- Returns the value of <code>a<sup>e</sup> % m</code>.
+	function tbl:ModPow(mod: AptInt, exp: AptInt): AptInt
+		-- https://en.wikipedia.org/wiki/Modular_exponentiation#Right-to-left_binary_method
+		local a: AptInt = self:ModRaw(mod)
+		
+		local result: AptInt = AP_ONE:clone()
+		
+		--> single limb optimization
+		if #exp.limbs == 1 then
+			local e: number = exp.limbs[1]
+			while e ~= 0 do
+				if bband(e, 1) == 1 then
+					result = result:MultiplyRaw(a):ModRaw(mod)
+				end
+				
+				e = brshift(e, 1)
+				a = a:MultiplyRaw(a):ModRaw(mod)
+			end
+			
+			return result
+		end
+		
+		while exp.signum ~= 0 do
+			if bband(exp.limbs[1], 1) == 1 then
+				result = result:MultiplyRaw(a):ModRaw(mod)
+			end
+			
+			a = a:MultiplyRaw(a):ModRaw(mod)
+			exp = exp:DivideRaw(AP_TW0)
+		end
+
+		return result
 	end
 	
 	tbl.zero = AptInt.new()
