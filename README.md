@@ -1,29 +1,27 @@
 <p align="center"><img src="https://github.com/fosterchild1/AptInt/blob/main/resources/text.png" width="659" height="288"></p>
 
 ## <p align="center">The most performant Luau implementation of BigInteger.</p>
-It can support up to b × 2⁵³ digits before it loses precision.
+# About
+AptInt is the fastest luau implementation of BigInteger. It uses base 10^7 to store numbers and uses asymptotically faster algorithms designed for working with numbers over 10,000 digits long.
 
-Right now, b = 10⁷, which is around 90 sextillion digits.
+# What makes it so fast?
+AptInt uses the Karatsuba and Toom-Cook3 algorithms for multiplication, Knuths algorithm D for division, Karatsuba sqrt for finding the square root and more. Alongside these algorithms, it uses many techniques to shave off hundreds of milliseconds of computing time.
 
-# 💡 Getting the most performance out of it
-You can make <b>AptInt</b> work better for your use case by:
-- Changing it's "BASE" variable. By default, it is set to 7. If you know you aren't going to multiply or divide two numbers, it can go all the way up to 14, doubling its performance.
-- Only constructing using number tables. Avoid parsing from strings or numbers if possible.
-- Using the raw methods instead of metamethods. This avoids additional overhead created by verifying the arguments.
+It also utilizes the full power of native code generation to get even faster results.
 
-# 💡 Extensions
-Extending the module is very easy. Just call `AptInt.Extend(func)`. For example,
+# Extensions
+AptInt comes with a couple of official extensions made to help you. They are functions deemed too unimportant to be put in the main script, and so they can be found in a seperate `Extensions.luau` file to keep the codebase tidier.<br/>
 
+The extensions are designed for ease of use, and you can use them as such:
 ```luau
-AptInt.Extend(function(tbl: typeof(AptInt) | any)
-	function tbl:IsEven(): boolean
-		return (self :: AptInt).digits[1] % 2 == 0
-	end
-end)
+local aptint = require("AptInt")
+local ext = require("AptInt/Extensions")
+
+type AptInt = aptint.AptInt & ext.Extensions -- OR: type AptInt = ext.ExtendedApt
 ```
 
-# 💡 Benchmarks
-Note that these were done on an i7-10750H CPU The benchmark script can be found in [/bench/](https://github.com/fosterchild1/AptInt/blob/main/bench/bench.luau).<br/>
+# Benchmarks
+Note that these were done on an i7-10750H. CPU The benchmark script can be found in [/bench/](https://github.com/fosterchild1/AptInt/blob/main/bench/bench.luau).<br/>
 The results are updated every time the performance gets improved.
 
 | Digit count | Addition | Subtraction | Multiplication | Division | Square root |
