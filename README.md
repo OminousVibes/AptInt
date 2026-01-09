@@ -17,12 +17,12 @@ The extensions are designed for ease of use, and you can use them as such:
 local aptint = require("AptInt")
 local ext = require("AptInt/Extensions")
 
-type AptInt = aptint.AptInt & ext.Extensions -- OR: type AptInt = ext.ExtendedApt
+type ExtendedApt = ext.ExtendedApt
 ```
 
 # Benchmarks
-Note that these were done on an i7-10750H. CPU The benchmark script can be found in [/bench/](https://github.com/fosterchild1/AptInt/blob/main/bench/bench.luau).<br/>
-The results are updated every time the performance gets improved.
+Note that these were done on an i7-10750H CPU. The benchmark script can be found in [/bench/](https://github.com/fosterchild1/AptInt/blob/main/bench/bench.luau).<br/>
+The results are updated every time the performance gets improved. They are also generally ~1.3x faster if running on the server.
 
 | Digit count | Addition | Subtraction | Multiplication | Division | Square root |
 | ---  | --- | --- | --- | --- | --- |
@@ -33,5 +33,5 @@ The results are updated every time the performance gets improved.
 | 1,000 | 10μs | 13μs | 406μs | 353μs | 1ms |
 | 5,000 | 37μs | 30μs | 4ms | 7ms | 5ms |
 | 10,000 | 57μs | 74μs | 14ms | 31ms | 17ms |
-| 50,000 | 229μs | 243μs | 139ms | 634ms | 507ms |
-| 100,000 | 439μs | 470μs | 406ms | 2.5s | 1.9s |
+| 50,000 | 229μs | 243μs | 128ms | 634ms | 507ms |
+| 100,000 | 439μs | 470μs | 397ms | 2.5s | 1.9s |
