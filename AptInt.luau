@@ -64,6 +64,7 @@ local brshift: (number, number) -> number = bit32.rshift
 local tcreate: <V>(number, V?) -> {V} = table.create
 local tinsert: <V>({V}, V) -> () & <V>({V}, number, V) -> () = table.insert
 local tremove: <V>({V}, number?) -> V? = table.remove
+local tconcat: <V>({V}, string?, number?, number?) ->string = table.concat
 local tmove: <V>({V}, number, number, number, {V}?) -> {V} = table.move
 local tclone: <T>({T}) -> {T} = table.clone
 
@@ -77,8 +78,9 @@ local KARATSUBA_THRESHOLD: number = 45 -- in limbs, limit where karatsuba is fas
 local SQRT_KARATSUBA_THRESHOLD: number = 32
 local TOOM_THRESHOLD: number = 90
 
-local BASE_POW: number = 7 -- MUST SATISFY: 10^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
-local BASE: number = 10 ^ BASE_POW
+local BASE_POW: number = 26 -- MUST SATISFY: 2^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
+local L10_BASE_POW: number = floor(log10(BASE_POW))
+local BASE: number = 2 ^ BASE_POW
 
 local AP_NEG_ONE: AptInt
 local AP_ZERO: AptInt
@@ -90,19 +92,32 @@ local AP_THREE: AptInt
 local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 	["string"] = function(str: string): ({number}, number)
 		local isNegative: boolean = str:sub(1, 1) == "-"
-		local strStart: number = isNegative and 2 or 1
+		if isNegative then
+			str = str:sub(2)
+		end
 
-		local i: number = #str
 		local arr: {number} = {}
 		
-		repeat
-			local chars: string = str:sub(max(i - BASE_POW + 1, strStart), i)
-			local num: number? = tonumber(chars)
-			if not num then break end
+		while str ~= "0" do
+			local carry: number = 0
+			local out: {string} = {}
+			
+			for i: number = 1, #str do
+				local digit: number = tonumber(str:sub(i, i)) or 0
+				
+				local p: number = carry * 10 + digit
+				local q: number = p // BASE
+				carry = p % BASE
 
-			i -= BASE_POW
-			tinsert(arr, num)
-		until i < strStart
+				if #out == 0 and q == 0 then continue end
+				--print(q)
+				tinsert(out, tostring(q))
+			end
+
+			tinsert(arr, carry)
+			
+			str = (#out > 0) and tconcat(out) or "0"
+		end
 
 		return arr, (isNegative and -1 or 1)
 	end,
@@ -248,20 +263,20 @@ local function MultiplyToomCook3(x: AptInt, y: AptInt): AptInt
 		db1:AddRaw(db1, true):SubtractRaw(y0, true), true
 	)
 	
-	--> all divisions here are single-limb, so they are O(n).
+	--> all divisions here are single-limb, so they are linear.
 	local vinf: AptInt = x2:MultiplyRaw(y2, true)
-	local t2: AptInt = v2:SubtractRaw(vm1, true):DivideRaw(AP_THREE, true)
+	v2:SubtractRaw(vm1, true):DivideRaw(AP_THREE, true)
 	local tm1: AptInt = v1:SubtractRaw(vm1):DivideRaw(AP_TWO, true)
-	local t1: AptInt = v1:SubtractRaw(v0, true)
+	v1:SubtractRaw(v0, true)
 	
-	t2 = t2:SubtractRaw(t1, true):DivideRaw(AP_TWO, true) 
-	t1 = t1:SubtractRaw(tm1, true):SubtractRaw(vinf, true)
-	t2 = t2:SubtractRaw(vinf:AddRaw(vinf), true)
-	tm1 = tm1:SubtractRaw(t2, true)
+	v2:SubtractRaw(v1, true):DivideRaw(AP_TWO, true) 
+	v1:SubtractRaw(tm1, true):SubtractRaw(vinf, true)
+	v2:SubtractRaw(vinf:AddRaw(vinf), true)
+	tm1:SubtractRaw(v2, true)
 	
 	local result: AptInt = vinf
-		:LeftShift(k):AddRaw(t2, true)
-		:LeftShift(k):AddRaw(t1, true)
+		:LeftShift(k):AddRaw(v2, true)
+		:LeftShift(k):AddRaw(v1, true)
 		:LeftShift(k):AddRaw(tm1, true)
 		:LeftShift(k):AddRaw(v0, true)
 	
@@ -294,7 +309,7 @@ end
 
 local function TryModExp(limb: number, div: number, base: number): (boolean, number)
 	local log: number = log(div, base)
-	if log ~= floor(log) or log > BASE_POW then -- log > BASE_POW since each power we check 1 more digit
+	if log ~= floor(log) or log > L10_BASE_POW then -- log > L10_BASE_POW since each power we check 1 more digit
 		return false, 0
 	end	
 
@@ -303,13 +318,16 @@ end
 
 local function LowerThanAbsolute(x: AptInt, y: AptInt): boolean
 	local xLimbs: {number}, yLimbs: {number} = x.limbs, y.limbs
-
-	if #xLimbs < #yLimbs then
+	
+	local xLen: number, yLen: number = #xLimbs, #yLimbs
+	if xLen < yLen then
 		return true
+	elseif yLen < xLen then
+		return false
 	end
 
-	for i: number = #xLimbs, 1, -1 do
-		local xDigit: number, yDigit: number = xLimbs[i], yLimbs[i] or 0
+	for i: number = xLen, 1, -1 do
+		local xDigit: number, yDigit: number = xLimbs[i], yLimbs[i]
 		if xDigit == yDigit then continue end
 
 		return xDigit < yDigit
@@ -557,14 +575,14 @@ function AptInt:MultiplyRaw(factor: AptInt, inPlace: boolean?): AptInt
 		return AptInt.new()
 	end
 
-	local selflimbs: {number} = self.limbs
-	local factorlimbs: {number} = factor.limbs
-	local factorLen: number = #factorlimbs
-	local selfLen: number = #selflimbs
+	local selfLimbs: {number} = self.limbs
+	local factorLimbs: {number} = factor.limbs
+	local factorLen: number = #factorLimbs
+	local selfLen: number = #selfLimbs
 
 	--> single limb multiplication
 	if factorLen == 1 then
-		local mul: number = factorlimbs[1]
+		local mul: number = factorLimbs[1]
 		local result: AptInt = (inPlace and self or self:clone())
 		
 		if mul == 1 then 
@@ -576,11 +594,17 @@ function AptInt:MultiplyRaw(factor: AptInt, inPlace: boolean?): AptInt
 		local rLimbs: {number} = result.limbs
 
 		local carry: number = 0
-		for i: number, limb: number in selflimbs do
+		for i: number, limb: number in selfLimbs do
 			local p: number = limb * mul + carry
-
-			carry = p // BASE
-			rLimbs[i] = p % BASE
+			
+			if p > BASE then
+				carry = p // BASE
+				p %= BASE
+			else
+				carry = 0
+			end
+			
+			rLimbs[i] = p
 		end
 
 		if carry > 0 then
@@ -605,17 +629,23 @@ function AptInt:MultiplyRaw(factor: AptInt, inPlace: boolean?): AptInt
 	local carry: number = 0
 	factorLen -= 1
 	for i: number = 1, len do
-		local sum: number = carry
+		local p: number = carry
 		local iplus: number = i + 1
 		
-		for j: number = max(i - factorLen, 1), min(i, selfLen) do -- do this to avoid if checks each iteration
-			sum += selflimbs[j] * factorlimbs[iplus - j]
+		for j: number = max(i - factorLen, 1), min(i, selfLen) do -- avoid if statements each iteration
+			p += selfLimbs[j] * factorLimbs[iplus - j]
 		end
 		
-		rLimbs[i] = sum % BASE
-		carry = sum // BASE
+		if p > BASE then
+			carry = p // BASE
+			p %= BASE
+		else
+			carry = 0
+		end
+		
+		rLimbs[i] = p
 	end
-
+	
 	StripLeadingZeros(result)
 	result.signum = selfSign * factorSign
 	return result
@@ -624,6 +654,7 @@ end
 -- Returns the quotient and remainder of a / b.
 function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
 	--> we use knuths algorithm D for division
+	--> its a very lengthy and ugly algorithm
 
 	local divSign: number, selfSign: number = divisor.signum, self.signum
 	local sameSign: boolean = divSign == selfSign
@@ -773,9 +804,8 @@ function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
 
 	for i: number = #UnLimbs, 1, -1 do
 		local x: number = carry * BASE + UnLimbs[i]
-		local rDigit: number = x // D
 		
-		carry = x % D :: number
+		carry = x % D 
 		UnLimbs[i] = x // D
 	end
 	
@@ -794,36 +824,23 @@ end
 -- Returns a new AptInt equal to <code>a % b</code>.
 function AptInt:ModRaw(div: AptInt): AptInt
 	--> TODO: THIS IS REAAAAALLY UGLY.
-	local divLimbs: {number} = div.limbs
-	local divLimbAmount: number, selfLimbAmount: number = #divLimbs, #(self :: AptInt).limbs
-
+	local divLimbs: {number}, selfLimbs: {number} = div.limbs, self.limbs
+	
 	local selfSign: number, divSign: number = self.signum, div.signum
 
 	local divFirst: number = divLimbs[1] * divSign
-	local selfFirst: number = self.limbs[1] * selfSign
+	local selfFirst: number = selfLimbs[1] * selfSign
 	
 	--> CASES
-	if divSign == 0 or (divLimbAmount == 1 and abs(divFirst) == 1) then
+	print(#divLimbs, #selfLimbs)
+	if divSign == 0 or (#divLimbs == 1 and abs(divFirst) == 1) then
 		return AptInt.new()
-	elseif selfLimbAmount == 1 and divLimbAmount == 1 then
-		return AptInt.new({selfFirst % divFirst})
-	elseif divLimbAmount ~= 1 then
-		local _: AptInt, r: AptInt = self:DivideRaw(div)
-		return r
+	elseif #selfLimbs == 1 and #divLimbs == 1 then
+		return AptInt.new(selfFirst % divFirst)
 	end
-
-	--> single limb divisor optimizations
 	
-	local success: boolean, mod: number = TryModExp(selfFirst, divFirst, 2) -- 2
-	if success then return AptInt.new({mod}) end
-
-	success, mod = TryModExp(selfFirst, divFirst, 5) -- 5
-	if success then return AptInt.new({mod}) end
-
-	success, mod = TryModExp(selfFirst, divFirst, 10) -- 10
-	if success then return AptInt.new({mod}) end
-
 	local _: AptInt, r: AptInt = self:DivideRaw(div)
+	print(selfSign, divSign)
 	return r
 end
 
@@ -902,22 +919,38 @@ end
 
 -- Returns a new string representation of an AptInt
 function AptInt:ToString(): string
-	local str: string = (self.signum == -1 and "-" or "")
 	if self.signum == 0 then
 		return "0"
 	end
 
 	local limbs: {number} = self.limbs
-	str ..=limbs[#limbs]
+	local str: string = ""
+	
+	local clone: {number} = tclone(limbs)
+	
+	--> we convert from base 2^26 to decimal
+	while #clone > 0 do
+		local carry: number = 0
 
-	local formatStr: string = `%0{BASE_POW}d`
+		for i: number = #clone, 1, -1 do
+			local val: number = clone[i] + carry * BASE
+			
+			carry = val % 10
+			clone[i] = val // 10
+		end
+		
+		str = tostring(carry)..str
 
-	--> from left to right
-	for i: number = #limbs - 1, 1, -1 do
-		str ..= sformat(formatStr, limbs[i]) -- prepend dem zeros
+		-- stripleadingzeros
+		while true do
+			local len: number = #clone
+			if len == 0 or clone[len] ~= 0 then break end
+			
+			clone[len] = nil
+		end
 	end
-
-	return str
+	
+	return self.signum == -1 and "-"..str or str
 end
 
 -- Returns a double equal to <code>tonumber(x)</code>
@@ -973,13 +1006,13 @@ function AptInt:LowerOrEqualToRaw(num: AptInt): boolean
 		return true
 	end
 
-	local selflimbs: {number}, numlimbs: {number} = self.limbs, num.limbs
+	local selfLimbs: {number}, numlimbs: {number} = self.limbs, num.limbs
 	if bothNegative then
-		selflimbs, numlimbs = numlimbs, selflimbs
+		selfLimbs, numlimbs = numlimbs, selfLimbs
 	end
 	
-	for i: number = #selflimbs, 1, -1 do
-		local sDigit: number, nDigit: number = selflimbs[i], numlimbs[i] or 0
+	for i: number = #selfLimbs, 1, -1 do
+		local sDigit: number, nDigit: number = selfLimbs[i], numlimbs[i] or 0
 		if sDigit == nDigit then continue end
 		return sDigit <= nDigit
 	end
