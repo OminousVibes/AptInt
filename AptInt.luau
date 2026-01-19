@@ -288,10 +288,10 @@ local function MultiplyToomCook3(x: AptInt, y: AptInt): AptInt
 	tm1 = tm1:SubtractRaw(v2, true)
 	
 	local result: AptInt = vinf
-		:LeftShift(k):AddRaw(v2)
-		:LeftShift(k):AddRaw(v1)
-		:LeftShift(k):AddRaw(tm1)
-		:LeftShift(k):AddRaw(v0)
+		:LeftShift(k):AddRaw(v2, true)
+		:LeftShift(k):AddRaw(v1, true)
+		:LeftShift(k):AddRaw(tm1, true)
+		:LeftShift(k):AddRaw(v0, true)
 	
 	if x.signum ~= y.signum then
 		return result:Negate(true)
@@ -486,7 +486,7 @@ local function DivBZ3n2n(a1: AptInt, a2: AptInt, a3: AptInt, b1: AptInt, b2: Apt
 		-- step 4: D = (b2 << n) - b2
 		D = b2:LeftShift(n):SubtractRaw(b2)
 	end
-	print(#R.limbs, #D.limbs, n)
+	
 	R = R:LeftShift(n):AddRaw(a3):SubtractRaw(D) -- paper says a4 but its actually a3
 	
 	--> q too large by atleast 1
@@ -551,7 +551,6 @@ local function DivBurnikelZiegler(A: AptInt, B: AptInt): (AptInt, AptInt)
 	)
 	
 	local shift: number = n-s
-	print(shift)
 	local bShifted: AptInt, aShifted: AptInt = B:MultiplyRaw(sigma), A:MultiplyRaw(sigma)
 	if shift > 0 then
 		bShifted = B:LeftShift(shift)
@@ -573,11 +572,9 @@ local function DivBurnikelZiegler(A: AptInt, B: AptInt): (AptInt, AptInt)
 	quotient.limbs = {} -- so that the 1st leftshift doesnt offset it by 1
 	for i: number = t-2, 0, -1 do
 		--> 8a. qi, ri
-		print(#z.limbs, #bShifted.limbs)
 		local qi: AptInt, ri: AptInt = DivBZ2n1n(z, bShifted)
 		
 		quotient = quotient:LeftShift(n):AddRaw(qi)
-		print(i)
 		if i > 0 then
 			local startIdx: number = max(r - (t - i + 1) * n + 1, 1)
 			local endIdx: number = r - (t - i) * n
@@ -586,7 +583,6 @@ local function DivBurnikelZiegler(A: AptInt, B: AptInt): (AptInt, AptInt)
 			--> 8b. z = [ri, a_i-1]
 			ai1 = PadToLen(ai1, n)
 			z = ri:LeftShift(n):AddRaw(ai1)
-			print(z.limbs)
 		else -- final iteration, remainder = z
 			z = ri
 		end
@@ -828,7 +824,7 @@ function AptInt:SubtractRaw(term: AptInt, inPlace: boolean?): AptInt
 end
 
 -- Returns an AptInt equal to <code>a * b</code>.
-function AptInt:MultiplyRaw(factor: AptInt, i: boolean?): AptInt
+function AptInt:MultiplyRaw(factor: AptInt): AptInt
 	local selfSign: number, factorSign: number = self.signum, factor.signum
 
 	--> CASES
@@ -876,7 +872,7 @@ function AptInt:MultiplyRaw(factor: AptInt, i: boolean?): AptInt
 		return result
 	end
 	
-	if selfLen > TOOM_THRESHOLD and factorLen > TOOM_THRESHOLD and not i then
+	if selfLen > TOOM_THRESHOLD and factorLen > TOOM_THRESHOLD then
 		local result: AptInt = MultiplyToomCook3(self, factor)
 		StripLeadingZeros(result)
 		return result
@@ -916,7 +912,7 @@ function AptInt:MultiplyRaw(factor: AptInt, i: boolean?): AptInt
 end
 
 -- Returns the quotient and remainder of a / b.
-function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
+function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	--> we use knuths algorithm D for division
 	--> its a very lengthy and ugly algorithm
 
@@ -949,7 +945,7 @@ function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
 	if #V == 1 then
 		local div: number = V[1]
 		
-		local quotient: AptInt = (inPlace and self or self:clone())
+		local quotient: AptInt = self:clone()
 		quotient.signum = selfSign/divSign
 		
 		if div == 1 then
@@ -977,7 +973,7 @@ function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
 	end
 	
 	local quotient: AptInt, remainder: AptInt
-	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD and not inPlace then
+	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD then
 		quotient, remainder = DivBurnikelZiegler(self, divisor)
 	else
 		quotient, remainder = DivKnuths(self, divisor)
@@ -1082,6 +1078,8 @@ function AptInt:sqrt(): AptInt
 	end
 	
 	if #(self :: AptInt).limbs >= SQRT_KARATSUBA_THRESHOLD then
+		--> TODO: this is quite innacurate, could benefit from newtonheronsqrt after
+		--> with initial guess = s
 		local s, _ = KaratsubaSqrt(self)
 		return s
 	end
@@ -1185,7 +1183,7 @@ end
 
 -- Returns a new AptInt equal to <code>n * 10<sup>(BASE * amount)</sup></code>
 function AptInt:LeftShift(amount: number): AptInt
-	-- this is the fastest way to leftshift.
+	-- this is the fastest way to leftshift
 	return AptInt.new(tmove(self.limbs, 1, #self.limbs, amount+1, tcreate(amount, 0)))
 end
 
