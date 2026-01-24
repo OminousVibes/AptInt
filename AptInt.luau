@@ -78,6 +78,7 @@ local KARATSUBA_THRESHOLD: number = 45 -- in limbs, limit where karatsuba is fas
 local SQRT_KARATSUBA_THRESHOLD: number = 32
 local TOOM_THRESHOLD: number = 90
 local BURNIKEL_THRESHOLD: number = 80
+local MIN_BURNIKEL_OFFSET: number = 40
 
 local BASE_POW: number = 7 -- MUST SATISFY: 10^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
 local BASE: number = 10 ^ BASE_POW
@@ -470,11 +471,11 @@ local function DivBZ3n2n(a1: AptInt, a2: AptInt, a3: AptInt, b1: AptInt, b2: Apt
 	--> Algorithm 2 from https://pure.mpg.de/rest/items/item_1819444_4/component/file_2599480/content
 	local n: number = #b2.limbs
 	
-	local a1a2: AptInt = a1:LeftShift(n):AddRaw(a2)
 	local B: AptInt = b1:LeftShift(n):AddRaw(b2) -- [b1, b2]
-	print(a1.limbs, b1.limbs)
+	
 	local q: AptInt, R: AptInt, D: AptInt
 	if a1:LowerThanRaw(b1) then -- step 3a: a1 < b1
+		local a1a2: AptInt = a1:LeftShift(n):AddRaw(a2)
 		q, R = DivBZ2n1n(a1a2, b1)
 		
 		-- step 4: d = q * b2
@@ -487,14 +488,15 @@ local function DivBZ3n2n(a1: AptInt, a2: AptInt, a3: AptInt, b1: AptInt, b2: Apt
 		D = b2:LeftShift(n):SubtractRaw(b2)
 	end
 	
-	R = R:LeftShift(n):AddRaw(a3):SubtractRaw(D) -- paper says a4 but its actually a3
-	
+	R = R:LeftShift(n):AddRaw(a3) -- paper says a4 but its actually a3
+
 	--> q too large by atleast 1
-	while R.signum == -1 do
+	while R:LowerThanRaw(D) do
 		q = q:SubtractRaw(AP_ONE)
 		R = R:AddRaw(B)
 	end
-	
+
+	R = R:SubtractRaw(D)
 	return q, R
 end
 
@@ -513,7 +515,6 @@ function DivBZ2n1n(A: AptInt, B: AptInt): (AptInt, AptInt)
 	--> get a1,a2,a3,a4 and b1,b2, where a=[a1,a2,a3,a4] and b=[b1,b2]
 	local a1: AptInt, a2: AptInt = GetSlice(A, 3*k+1, 4*k), GetSlice(A, 2*k+1, 3*k)
 	local a3: AptInt, a4: AptInt = GetSlice(A, k+1, 2*k), GetSlice(A, 1, k)
-	
 	local b1: AptInt, b2: AptInt = GetUpper(B, k), GetLower(B, k)
 	
 	--> get q1,R
@@ -531,80 +532,57 @@ local function DivBurnikelZiegler(A: AptInt, B: AptInt): (AptInt, AptInt)
 	--> https://github.com/leif-ibsen/BigInt/blob/master/Sources/BigInt/BurnikelZiegler.swift
 	--> https://github.com/tbuktu/bigint/blob/master/src/main/java/java/math/MutableBigInteger.java#L1249
 	
-	--> this was a really hard algorithm to implement
+	--> this was a really horrible algorithm to implement. never again.
+	--> started implementing on 12/28/2025, finished on 1/24/2026. just as a reference
 	
 	--> 0. s = B length
 	local s: number = #B.limbs
 	
 	--> 1. get m, j and n
 	local m: number = 2^floor(log(s/BURNIKEL_THRESHOLD, 2) + 1)
-	print(m)
 	
-	local j: number = (s+m-1)//m
+	local j: number = ceil(s/m)
 	local n: number = j * m
-	print(j,n)
 	
 	--> 3. set sigma to normalize B and A, so that B[#B] >= BASE/2
 	--> sigma is single-limb, so multiplication here is linear.
 	local sigma: AptInt = AptInt.new({BASE // (B.limbs[s] + 1)})
 	local shift: number = n-s
-	print(sigma, shift)
+	
 	local bShifted: AptInt, aShifted: AptInt = B:MultiplyRaw(sigma), A:MultiplyRaw(sigma)
 	if shift > 0 then
 		bShifted = bShifted:LeftShift(shift)
 		aShifted = aShifted:LeftShift(shift)
 	end
-	print(bShifted.limbs,aShifted.limbs)
+	
 	local r: number = #aShifted.limbs
 	s = #bShifted.limbs
-	print(r,s)
 	
 	--> 5. calculate t: how many n-sized chunks are in A, t >= 2
-	local t: number = max((r + n) // n, 2)
-	print(t)
-	--> 6. z = [a[t-1], a[t-2]]
-	local z: AptInt, a2: AptInt = GetSlice(aShifted, r-n+1, r), GetSlice(aShifted, r-2*n, r-n)
-	z = z:LeftShift(n):AddRaw(a2)
+	local t: number = max(ceil(r/n), 2)
+	
+	--> 6. z = [a[t-1], 0]. we add a[t-2] inside loop
+	local z: AptInt = GetSlice(aShifted, (t-1)*n+1, r)
 	
 	--> 7. for i = t - 2, 1 do
 	local quotient: AptInt = AptInt.new()
 	quotient.limbs = {} -- so that the 1st leftshift doesnt offset it by 1
 	for i: number = t-2, 0, -1 do
-		--> 8a. qi, ri
-		print(`2n1n check `, #z.limbs==#bShifted.limbs*2)
-		print(#z.limbs, #bShifted.limbs)
-		local qi: AptInt, ri: AptInt = DivBZ2n1n(z, bShifted)
+		--> get ai1
+		local startIdx: number = i * n + 1
+		local endIdx: number = (i + 1) * n
+		local ai1: AptInt = GetSlice(aShifted, startIdx, endIdx)
 		
-		quotient = quotient:LeftShift(n):AddRaw(qi)
-		--print(i)
-		if i > 0 then
-			local startIdx: number = max(r - (t - i + 1) * n + 1, 1)
-			local endIdx: number = r - (t - i) * n
-			local ai1 = GetSlice(aShifted, startIdx, endIdx)
-			
-			--> 8b. z = [ri, a_i-1]
-			ai1 = PadToLen(ai1, n)
-			z = ri:LeftShift(n):AddRaw(ai1)
-		else -- final iteration, remainder = z
-			z = ri
-		end
+		z = z:LeftShift(n):AddRaw(ai1)
+		
+		--> 8a. qi, ri
+		local qi: AptInt, ri: AptInt = DivBZ2n1n(z, bShifted)
+		quotient = quotient:AddRaw(qi:LeftShift(i * n))
+		
+		z = ri
 	end
 	
-	--> correct quotient
-	-- for some reason, i dont know why, i would only hope to know why, the quotient size = m
-	-- or if its not m its a power of two. i have tried for a week straight to fix it,
-	-- but this bandaid will do for now and probably for the future too.
-	-- hopefully another coder that understands this paper better can fix it for me, but i dont
-	-- think anyones really gonna bother, is anyone even going to read this 5 months from now?
-	-- anyways, what this does is calculate size of a/b=h and get upper h limbs from quotient.
-	-- hopefully thats a good enough fix. from my tests it is
-	 
-	local topA: AptInt = GetSlice(A, r-s+1, r)  -- upper lenB limbs of A
-	if topA:LowerThanRaw(B) then
-		quotient = GetUpper(quotient, #quotient.limbs - (r - s))
-	else
-		quotient = GetUpper(quotient, #quotient.limbs - (r - s + 1))
-	end	
+	StripLeadingZeros(quotient)
 	
 	z = z:DivideRaw(sigma)
 	return quotient, z
@@ -676,7 +654,7 @@ local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
 	local r: AptInt = u:LeftShift(m):AddRaw(a0, true):SubtractRaw(q:MultiplyRaw(q), true)
 	
 	--> correct
-	while r.signum == -1 do
+	if r.signum == -1 then
 		r = r:AddRaw(s:AddRaw(s), true):SubtractRaw(AP_ONE, true)
 		s = s:SubtractRaw(AP_ONE, true)
 	end
@@ -797,6 +775,7 @@ function AptInt:SubtractRaw(term: AptInt, inPlace: boolean?): AptInt
 	elseif selfSign == 0 then -- 0 - b = -b
 		local negate: AptInt = term:Negate()
 		if inPlace then self = negate end
+		
 		return negate
 	elseif termSign == -1 and selfSign == 1 then -- a-(-b) = a+b
 		return NegateRef(term):AddRaw(self)
@@ -981,7 +960,9 @@ function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
 	end
 	
 	local quotient: AptInt, remainder: AptInt
-	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD and not inPlace then
+	local diff = #U - #V
+	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD and diff > MIN_BURNIKEL_OFFSET 
+		and not inPlace then
 		quotient, remainder = DivBurnikelZiegler(self, divisor)
 	else
 		quotient, remainder = DivKnuths(self, divisor)
@@ -1077,7 +1058,7 @@ function AptInt:PowRaw(pow: AptInt)
 end
 
 -- Returns a new AptInt equal to <code>sqrt(n)</code>.
-function AptInt:sqrt(i: boolean?): AptInt
+function AptInt:sqrt(i): AptInt
 	--> we compute the isqrt via Newton-Heron iteration for small numbers
 	--> for big numbers, we use karatsuba square root algorithm
 
@@ -1086,8 +1067,6 @@ function AptInt:sqrt(i: boolean?): AptInt
 	end
 	
 	if #(self :: AptInt).limbs >= SQRT_KARATSUBA_THRESHOLD and not i then
-		--> TODO: this is quite innacurate, could benefit from newtonheronsqrt after
-		--> with initial guess = s
 		local s, _ = KaratsubaSqrt(self)
 		return s
 	end
