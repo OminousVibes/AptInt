@@ -77,7 +77,7 @@ local sformat: (string, ...unknown) -> string = string.format
 local KARATSUBA_THRESHOLD: number = 45 -- in limbs, limit where karatsuba is faster than normal multiplication
 local SQRT_KARATSUBA_THRESHOLD: number = 32
 local TOOM_THRESHOLD: number = 90
-local BURNIKEL_THRESHOLD: number = 80
+local BURNIKEL_THRESHOLD: number = 280
 local MIN_BURNIKEL_OFFSET: number = 40
 
 local BASE_POW: number = 7 -- MUST SATISFY: 10^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
@@ -899,7 +899,7 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 end
 
 -- Returns the quotient and remainder of a / b.
-function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
+function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	--> we use knuths algorithm D for division
 	--> its a very lengthy and ugly algorithm
 
@@ -932,7 +932,7 @@ function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
 	if #V == 1 then
 		local div: number = V[1]
 		
-		local quotient: AptInt = (inPlace and self or self:clone())
+		local quotient: AptInt = self:clone()
 		quotient.signum = selfSign/divSign
 		
 		if div == 1 then
@@ -961,8 +961,7 @@ function AptInt:DivideRaw(divisor: AptInt, inPlace: boolean?): (AptInt, AptInt)
 	
 	local quotient: AptInt, remainder: AptInt
 	local diff = #U - #V
-	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD and diff > MIN_BURNIKEL_OFFSET 
-		and not inPlace then
+	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD and diff > MIN_BURNIKEL_OFFSET then
 		quotient, remainder = DivBurnikelZiegler(self, divisor)
 	else
 		quotient, remainder = DivKnuths(self, divisor)
