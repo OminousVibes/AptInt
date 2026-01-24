@@ -31,7 +31,7 @@ The results are updated every time the performance gets improved. They are also 
 | 100 | 1μs | 7μs | 12μs | 31μs | 322μs |
 | 500 | 2μs | 9μs | 120μs | 114μs | 737μs |
 | 1,000 | 10μs | 13μs | 406μs | 326μs | 1ms |
-| 5,000 | 37μs | 30μs | 4ms | 17ms | 14ms |
-| 10,000 | 57μs | 74μs | 14ms | 39ms | 30ms |
-| 50,000 | 229μs | 243μs | 128ms | 256ms | 141ms |
-| 100,000 | 439μs | 470μs | 397ms | 422ms | 469ms |
+| 5,000 | 37μs | 30μs | 4ms | 7ms | 4ms |
+| 10,000 | 57μs | 74μs | 14ms | 14ms | 18ms |
+| 50,000 | 229μs | 243μs | 128ms | 170ms | 141ms |
+| 100,000 | 439μs | 470μs | 397ms | 404ms | 322ms |
