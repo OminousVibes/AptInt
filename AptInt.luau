@@ -53,20 +53,20 @@ local log10: (number) -> number = math.log10
 local log: (number, number?) -> number = math.log
 local floor: (number) -> number = math.floor
 local ceil: (number) -> number = math.ceil
-local max: (...number) -> number = math.max
-local min: (...number) -> number = math.min
+local max: (number, number) -> number = math.max
+local min: (number, number) -> number = math.min
 local abs: (number) -> number = math.abs
 local sign: (number) -> number = math.sign
 
 local bband: (number, number) -> number = bit32.band
 local brshift: (number, number) -> number = bit32.rshift
 
-local tcreate: <V>(number, V?) -> {V} = table.create
+local tcreate: (number, number) -> {number} = table.create
 local tinsert: <V>({V}, V) -> () & <V>({V}, number, V) -> () = table.insert
-local tremove: <V>({V}, number?) -> V? = table.remove
-local tconcat: <V>({V}, string?, number?, number?) ->string = table.concat
-local tmove: <V>({V}, number, number, number, {V}?) -> {V} = table.move
-local tclone: <T>({T}) -> {T} = table.clone
+local tremove: ({number}, number?) -> number? = table.remove
+local tconcat: <V>({V}, string?, number?, number?) -> string = table.concat
+local tmove: ({number}, number, number, number, {number}?) -> {number} = table.move
+local tclone: ({number}) -> {number} = table.clone
 
 local sformat: (string, ...unknown) -> string = string.format
 
@@ -80,8 +80,9 @@ local TOOM_THRESHOLD: number = 90
 local BURNIKEL_THRESHOLD: number = 280
 local MIN_BURNIKEL_OFFSET: number = 40
 
-local BASE_POW: number = 7 -- MUST SATISFY: 2^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
-local BASE: number = 10 ^ 7
+local BASE_POW: number = 24 -- MUST SATISFY: 2^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
+local BASE: number = 2 ^ BASE_POW -- we use base 2^24 or else multiplication goes over 2^53
+local BASE_MASK: number = BASE - 1 -- 0xFFFFFF
 
 local FORMAT_STRING: string = `%0{BASE_POW}d`
 
@@ -100,14 +101,25 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 		end
 
 		local arr: {number} = {}
+		
+		--> convert from bae 10 to base 2^k
+		while str ~= "0" do
+			local carry: number = 0
+			local out: {string} = {}
 
-		repeat
-			local chars: string = str:sub(max(i - BASE_POW + 1, strStart), i)
-			local num: number? = tonumber(chars)
-			if not num then break end
+			for i: number = 1, #str do
+				local digit: number = tonumber(str:sub(i, i)) or 0
+
+				local p: number = carry * 10 + digit
+				local q: number = p // BASE
+				carry = p % BASE
+
+				if #out == 0 and q == 0 then continue end
+				tinsert(out, tostring(q))
+			end
 
 			tinsert(arr, carry)
-			
+
 			str = (#out > 0) and tconcat(out) or "0"
 		end
 
@@ -341,7 +353,7 @@ end
 
 --> divsion stuff
 local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt): AptInt
-	--[[local selfSign: number, divSign: number = self.signum, divisor.signum
+	local selfSign: number, divSign: number = self.signum, divisor.signum
 	local sameSign: boolean = selfSign == divSign
 	
 	if sameSign and divSign == -1 then
@@ -352,7 +364,7 @@ local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt
 	elseif not sameSign and remainder.signum ~= 0 then -- selfsign -1, divsign 1
 		remainder.signum = 1
 		return divisor:SubtractRaw(remainder)
-	end]]
+	end
 
 	return remainder
 end
@@ -590,15 +602,6 @@ local function DivBurnikelZiegler(A: AptInt, B: AptInt): (AptInt, AptInt)
 	return quotient, z
 end
 
-local function TryModExp(limb: number, div: number, base: number): (boolean, number)
-	local log: number = log(div, base)
-	if log ~= floor(log) or log > BASE_POW then -- log > BASE_POW since each power we check 1 more digit
-		return false, 0
-	end	
-
-	return true, limb % div
-end
-
 --> SQRT STUFF
 local function NewtonHeronSqrt(n: AptInt): AptInt
 	local prev2: AptInt = AP_NEG_ONE:clone()
@@ -751,11 +754,11 @@ function AptInt:AddRaw(term: AptInt, inPlace: boolean?): AptInt
 
 		if sum >= BASE then
 			carry = 1
-			sum -= BASE
-		else
-			carry = 0
+			rLimbs[i] = sum - BASE
+			continue
 		end
-
+		
+		carry = 0
 		rLimbs[i] = sum
 	end
 
@@ -800,11 +803,11 @@ function AptInt:SubtractRaw(term: AptInt, inPlace: boolean?): AptInt
 		local diff: number = digit - (limbsSubrahend[i] or 0) - borrow
 		if diff < 0 then
 			borrow = 1
-			diff += BASE
-		else
-			borrow = 0
+			rLimbs[i] = diff + BASE
+			continue
 		end
 		
+		borrow = 0
 		rLimbs[i] = diff
 	end
 	
@@ -901,7 +904,7 @@ function AptInt:MultiplyRaw(factor: AptInt): AptInt
 end
 
 -- Returns the quotient and remainder of a / b.
-function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
+function AptInt:DivideRaw(divisor: AptInt, i: boolean?): (AptInt, AptInt)
 	--> we use knuths algorithm D for division
 	--> its a very lengthy and ugly algorithm
 
@@ -963,7 +966,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	
 	local quotient: AptInt, remainder: AptInt
 	local diff = #U - #V
-	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD and diff > MIN_BURNIKEL_OFFSET then
+	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD and diff > MIN_BURNIKEL_OFFSET and not i then
 		quotient, remainder = DivBurnikelZiegler(self, divisor)
 	else
 		quotient, remainder = DivKnuths(self, divisor)
@@ -992,16 +995,6 @@ function AptInt:ModRaw(div: AptInt): AptInt
 	elseif #selfLimbs == 1 and #divLimbs == 1 then
 		return AptInt.new(selfFirst % divFirst)
 	end
-	
-	--> single limb divisor optimizationsx
-	local success: boolean, mod: number = TryModExp(selfFirst, divFirst, 2) -- 2
-	if success then return AptInt.new({mod}) end
-
-	success, mod = TryModExp(selfFirst, divFirst, 5) -- 5
-	if success then return AptInt.new({mod}) end
-
-	success, mod = TryModExp(selfFirst, divFirst, 10) -- 10
-	if success then return AptInt.new({mod}) end
 
 	local _: AptInt, r: AptInt = self:DivideRaw(div)
 	return r
@@ -1059,7 +1052,7 @@ function AptInt:PowRaw(pow: AptInt)
 end
 
 -- Returns a new AptInt equal to <code>sqrt(n)</code>.
-function AptInt:sqrt(i): AptInt
+function AptInt:sqrt(): AptInt
 	--> we compute the isqrt via Newton-Heron iteration for small numbers
 	--> for big numbers, we use karatsuba square root algorithm
 
@@ -1067,7 +1060,7 @@ function AptInt:sqrt(i): AptInt
 		return AptInt.new()
 	end
 	
-	if #(self :: AptInt).limbs >= SQRT_KARATSUBA_THRESHOLD and not i then
+	if #(self :: AptInt).limbs >= SQRT_KARATSUBA_THRESHOLD then
 		local s, _ = KaratsubaSqrt(self)
 		return s
 	end
@@ -1086,14 +1079,34 @@ function AptInt:ToString(): string
 	end
 
 	local limbs: {number} = self.limbs
-	str ..= limbs[#limbs]
-	
-	--> from left to right
-	for i: number = #limbs - 1, 1, -1 do
-		str ..= sformat(FORMAT_STRING, limbs[i]) -- prepend dem zeros
+	local str: string = ""
+
+	local clone: {number} = tclone(limbs)
+
+	--> convert from base 2^2k to 10
+	while #clone > 0 do
+		local carry: number = 0
+		
+		--> left to right
+		for i: number = #clone, 1, -1 do
+			local val: number = clone[i] + carry * BASE
+
+			carry = val % 10
+			clone[i] = val // 10
+		end
+
+		str = tostring(carry)..str
+
+		-- stripleadingzeros
+		while true do
+			local len: number = #clone
+			if len == 0 or clone[len] ~= 0 then break end
+			
+			clone[len] = nil
+		end
 	end
-	
-	return self.signum == -1 and "-"..str or str
+
+	return self.signum == -1 and `-{str}` or str
 end
 
 
