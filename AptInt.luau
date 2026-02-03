@@ -66,6 +66,9 @@ local tclone: ({number}) -> {number} = table.clone
 
 local bufcreate: (number) -> buffer = buffer.create
 local bufwrite: (buffer, number, number) -> () = buffer.writef64
+local bufread: (buffer, number) -> number = buffer.readf64
+local bufcopy: (buffer, number, buffer, number?, number?) -> () = buffer.copy
+local buflen: (buffer) -> number = buffer.len
 
 local sformat: (string, ...unknown) -> string = string.format
 
@@ -83,7 +86,7 @@ local MIN_MINADD_OFFSET: number = 20
 local BASE_POW: number = 24 -- MUST SATISFY: 2^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
 local BASE: number = 2^24 -- we use base 2^24 or else multiplication goes over 2^53
 local BASE_MASK: number = 0xFFFFFF -- BASE - 1
-local BASE_RADIX_CONST: number = 0.13841367062030677 -- log2(10)/BASE_POW
+local RADIX_CONST: number = 0.13841367062030677 -- log2(10)/BASE_POW
 
 local TOSTRING_CHUNK_SIZE: number = 10^8
 
@@ -99,8 +102,8 @@ local typeConstructors: {[string]: (any) -> (buffer, number)} = {
 			str = str:sub(2, #str)
 		end
 		
-		local convertedSize: number = ceil(#str * BASE_RADIX_CONST)
-		local buf: buffer = bufcreate(convertedSize)
+		local convertedSize: number = max(ceil(#str * RADIX_CONST), 1)
+		local buf: buffer = bufcreate(convertedSize * 8)
 		
 		--> convert from base 10 to base 2^k
 		local bufIndex: number = 0
@@ -141,11 +144,12 @@ local typeConstructors: {[string]: (any) -> (buffer, number)} = {
 		local actualSign: number = sign(num)
 		num = abs(num)
 		
-		local convertedSize: number = ceil(log10(num) * BASE_RADIX_CONST)
-		local buf: buffer = bufcreate(convertedSize)
+		local convertedSize: number = max(ceil(log10(num) * RADIX_CONST), 1)
+		local buf: buffer = bufcreate(convertedSize * 8)
 		
 		local bufIndex: number = 0
 		while num > 0 do
+			print(bufIndex, convertedSize * 8)
 			bufwrite(buf, bufIndex, floor(num % BASE))
 			num //= BASE
 			bufIndex += 8 -- doubles are 8 bytes
@@ -168,18 +172,28 @@ local typeConstructors: {[string]: (any) -> (buffer, number)} = {
 --> PRIVATE FUNCTIONS
 -- ==================
 
+--> Strips the leading zeros from the limbs buffer. (eg. <code>[1, 3, 0, 0] -> [1, 3]</code>)
 local function StripLeadingZeros(n: AptInt)
-	local limbs: {number} = n.limbs
-	while true do
-		local limbLen: number = #limbs
-		if limbLen == 1 or limbs[limbLen] ~= 0 then break end
+	local buf: buffer = n.limbs
+	local offset: number = 0
+	local len: number = buflen(buf)
 
-		limbs[limbLen] = nil
+	--> find the first non-zero limb
+	while offset ~= len and bufread(buf, len-8-offset) == 0 do
+		offset += 8
 	end
 
-	if #limbs == 1 and limbs[#limbs] == 0 then
+	--> []
+	if offset==buflen(buf) then
 		n.signum = 0
+		n.limbs = bufcreate(0)
+		return
 	end
+	
+	local newLimbs: buffer = bufcreate(len - offset)
+	bufcopy(newLimbs, 0, buf, 0, len - offset)
+
+	n.limbs = newLimbs
 end
 
 local function ArgumentToAptInt(num: ValidMetamethodArgument?, errContext: string): AptInt
@@ -349,17 +363,17 @@ local function MulToom3(x: AptInt, y: AptInt): AptInt
 end
 
 local function LowerThanAbsolute(x: AptInt, y: AptInt): boolean
-	local xLimbs: {number}, yLimbs: {number} = x.limbs, y.limbs
+	local xLimbs: buffer, yLimbs: buffer = x.limbs, y.limbs
 
-	local xLen: number, yLen: number = #xLimbs, #yLimbs
+	local xLen: number, yLen: number = buflen(xLimbs), buflen(yLimbs)
 	if xLen < yLen then
 		return true
 	elseif yLen < xLen then
 		return false
 	end
 
-	for i: number = xLen, 1, -1 do
-		local xDigit: number, yDigit: number = xLimbs[i], yLimbs[i]
+	for i: number = xLen-8, 0, -8 do
+		local xDigit: number, yDigit: number = bufread(xLimbs, i), bufread(yLimbs, i)
 		if xDigit == yDigit then continue end
 
 		return xDigit < yDigit
@@ -722,13 +736,16 @@ end
 
 --> this is ugly
 AP_NEG_ONE = AptInt.new(-1)
-AP_ONE = AptInt.new({1})
-AP_THREE = AptInt.new({3})
+AP_ONE = AptInt.new(1)
+AP_THREE = AptInt.new(3)
 
 -- Returns a copy of the AptInt.
 function AptInt.clone(n: AptInt): AptInt
+	local clonedLimbs: buffer = bufcreate(buflen(n.limbs))
+	bufcopy(clonedLimbs, 0, n.limbs)
+	
 	return setmetatable({
-		limbs = tclone(n.limbs),
+		limbs = clonedLimbs,
 		signum = n.signum
 	}, AptInt) :: AptInt
 end
@@ -756,7 +773,7 @@ function AptInt:AddRaw(term: AptInt, inPlace: boolean?): AptInt
 	
 	--> CASES
 	if termSign == 0 then
-		return (inPlace and self or self:clone())
+		return (inPlace and self or (self :: AptInt):clone())
 	elseif selfSign == 0 then
 		local clone: AptInt = term:clone()
 		if inPlace then self = clone end
@@ -768,8 +785,8 @@ function AptInt:AddRaw(term: AptInt, inPlace: boolean?): AptInt
 		return self:SubtractRaw(NegateRef(term), inPlace)
 	end
 
-	local termLimbs: {number}, selfLimbs: {number} = term.limbs, self.limbs
-	local termLen: number, selfLen: number = #termLimbs, #selfLimbs
+	local termLimbs: buffer, selfLimbs: buffer = term.limbs, self.limbs
+	local termLen: number, selfLen: number = buflen(termLimbs), buflen(selfLimbs)
 	
 	--> choose the longer number to avoid extra "or 0" with selfDigit
 	local result: AptInt
@@ -777,31 +794,40 @@ function AptInt:AddRaw(term: AptInt, inPlace: boolean?): AptInt
 		result = term:clone()
 		selfLimbs, termLimbs = termLimbs, selfLimbs
 	else
-		result = (inPlace and self or self:clone())
+		result = (inPlace and self or (self :: AptInt):clone())
 	end
 	
-	if abs(termLen - selfLen) > MIN_MINADD_OFFSET then
+	--[[if abs(termLen - selfLen) > MIN_MINADD_OFFSET then
 		return MinAdd(selfLimbs, termLimbs, result)
-	end
+	end]]
 	
-	local rLimbs: {number} = result.limbs
+	local termLen: number = buflen(term.limbs)
+	local rLimbs: buffer = result.limbs
 	
 	--> from right to left
 	local carry: number = 0
-	for i: number, selfDigit: number in selfLimbs do
-		local sum: number = selfDigit + (termLimbs[i] or 0) + carry
+	--print(buflen(rLimbs)/8)
+	for i: number = 0, buflen(rLimbs)-8, 8 do
+		local sum: number = bufread(rLimbs, i) + (i < termLen and bufread(termLimbs, i) or 0) + carry
 
 		if sum >= BASE then
 			carry = 1
-			rLimbs[i] = sum - BASE
+			bufwrite(rLimbs, i, sum - BASE)
 			continue
 		end
-		
+
 		carry = 0
-		rLimbs[i] = sum
+		bufwrite(rLimbs, i, sum)
 	end
 	
-	if carry > 0 then tinsert(rLimbs, carry) end
+	if carry > 0 then -- handle carry: reallocate to have 1 extra space and add carry
+		local carryBuf: buffer = bufcreate(buflen(rLimbs) + 1)
+		
+		bufcopy(carryBuf, 0, rLimbs)
+		bufwrite(carryBuf, buflen(rLimbs)-8, carry)		
+		result.limbs = carryBuf
+	end
+	
 	return result
 end
 
@@ -1107,33 +1133,29 @@ function AptInt:ToString(): string
 	
 	--> we convert from base 2^k to base 10 in chunks of 8 digits
 	--> 8 = max {k | 2^24 * 10^k < 2^53}
-	local limbs: {number} = self.limbs
-	local clone: {number} = tclone(limbs)
+	local clone: AptInt = self:clone()
+	local limbs: buffer = clone.limbs
 	
-	local chunkAmount: number = ceil(#clone * log10(BASE) / floor(log10(TOSTRING_CHUNK_SIZE)))
+	local chunkAmount: number = ceil(buflen(limbs) * log10(BASE) / floor(log10(TOSTRING_CHUNK_SIZE)))
 	local chunks: {string} = tcreate(chunkAmount, "")
 	
 	local chunkIdx: number = chunkAmount
-	while #clone > 0 do
+	local a = 0
+	while buflen(limbs) > 0 do
 		local carry: number = 0
-		for i: number = #clone, 1, -1 do
-			local val: number = clone[i] + carry * BASE
+		for i: number = buflen(limbs)-8, 0, -8 do
+			local val: number = bufread(limbs, i) + carry * BASE
 			
 			carry = val % TOSTRING_CHUNK_SIZE
-			clone[i] = val // TOSTRING_CHUNK_SIZE
+			bufwrite(limbs, i, val // TOSTRING_CHUNK_SIZE)
 		end
 		
 		--> we write in reverse order
 		chunks[chunkIdx] = sformat("%08d", carry)
 		chunkIdx -= 1
-
-		-- stripleadingzeros 
-		while true do 
-			local len: number = #clone 
-			if len == 0 or clone[len] ~= 0 then break end 
-			
-			clone[len] = nil 
-		end
+		
+		StripLeadingZeros(clone)
+		limbs = clone.limbs
 	end
 	
 	local str: string = tconcat(chunks):gsub("^0+", "") -- removes leading zeros, fast
