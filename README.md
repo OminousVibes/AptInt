@@ -25,30 +25,19 @@ AptInt uses the Karatsuba and Toom-Cook3 algorithms for multiplication, Knuths a
 
 It also utilizes the full power of native code generation to get even faster results.
 
-# Extensions
-AptInt comes with a couple of official extensions made to help you. They are functions deemed too unimportant to be put in the main script, and so they can be found in a seperate `Extensions.luau` file to keep the codebase tidier.<br/>
-
-The extensions are designed for ease of use, and you can use them as such:
-```luau
-local aptint = require("AptInt")
-local ext = require("AptInt/Extensions")
-
-type ExtendedApt = ext.ExtendedApt
-```
-
 # Benchmarks
 Note that these were done on an i7-10750H CPU. The benchmark script can be found in [/bench/](https://github.com/fosterchild1/AptInt/blob/main/bench/bench.luau).<br/>
-The results are updated every time the performance gets improved. They are also generally ~1.3x faster if running on the server.<br/>
+The results are updated every time the performance gets improved. They are also generally ~1.3x faster if running on the roblox server.<br/>
 For division, we do a 2NxN division. (2N = digit count)
 
 | Digit count | Addition | Subtraction | Multiplication | Division | Square root |
 | ---  | --- | --- | --- | --- | --- |
 | 1 | 1μs | 1μs | 1μs | 6μs | 7μs |
-| 50 | 1μs | 3μs | 9μs | 24μs | 40μs |
-| 100 | 1μs | 7μs | 12μs | 31μs | 183μs |
-| 500 | 2μs | 9μs | 120μs | 114μs | 357μs |
-| 1,000 | 10μs | 13μs | 406μs | 326μs | 737μs |
-| 5,000 | 37μs | 30μs | 4ms | 678μs | 3ms |
-| 10,000 | 57μs | 74μs | 14ms | 12ms | 9ms |
-| 50,000 | 229μs | 243μs | 128ms | 145ms | 106ms |
-| 100,000 | 439μs | 470μs | 346ms | 394ms | 283ms |
+| 50 | 1μs | 3μs | 4μs | 19μs | 40μs |
+| 100 | 1μs | 7μs | 6μs | 31μs | 183μs |
+| 500 | 2μs | 9μs | 66μs | 114μs | 357μs |
+| 1,000 | 10μs | 13μs | 225μs | 153μs | 737μs |
+| 5,000 | 37μs | 30μs | 3ms | 2ms | 2ms |
+| 10,000 | 57μs | 74μs | 14ms | 8ms | 9ms |
+| 50,000 | 229μs | 243μs | 90ms | 105ms | 106ms |
+| 100,000 | 439μs | 470μs | 253ms | 264ms | 175ms |
