@@ -1,0 +1,8 @@
+return {
+	BASE_POW = 24,
+	BASE = 2^24,
+	BASE_MASK = 16777215, -- BASE - 1
+	
+	--> ALGORITHM CONSTANTS
+	MIN_MINADD_OFFSET = 20,
+}

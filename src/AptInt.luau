@@ -14,7 +14,10 @@
 local AptInt = {} :: any
 AptInt.__index = AptInt
 
+local Addition = require("./Modules/Addition")
+local Subtraction = require("./Modules/Subtraction")
 local Type = require("./Type")
+
 export type AptInt = Type.AptInt
 export type ValidMetamethodArgument = Type.ValidMetamethodArgument
 export type ValidConstructor = Type.ValidConstructor
@@ -51,7 +54,6 @@ local SQRT_KARATSUBA_THRESHOLD: number = 32
 local TOOM3_THRESHOLD: number = 90
 local BURNIKEL_THRESHOLD: number = 280
 local MIN_BURNIKEL_OFFSET: number = 40
-local MIN_MINADD_OFFSET: number = 20
 
 local BASE_POW: number = 24 -- MUST SATISFY: 2^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
 local BASE: number = 2^24 -- we use base 2^24 or else multiplication goes over 2^53
@@ -140,20 +142,6 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 --> PRIVATE FUNCTIONS
 -- ==================
 
-local function StripLeadingZeros(n: AptInt)
-	local limbs: {number} = n.limbs
-	while true do
-		local limbLen: number = #limbs
-		if limbLen == 1 or limbs[limbLen] ~= 0 then break end
-
-		limbs[limbLen] = nil
-	end
-
-	if #limbs == 1 and limbs[#limbs] == 0 then
-		n.signum = 0
-	end
-end
-
 local function ArgumentToAptInt(num: ValidMetamethodArgument?, errContext: string): AptInt
 	local bigint: AptInt;
 
@@ -234,48 +222,6 @@ end
 -- =======================
 -- ALL SORTS OF ALGORITHMS
 -- =======================
-
-local function MinAdd(xLimbs: {number}, yLimbs: {number}, result: AptInt): AptInt
-	--> since result has self's limbs, we can just iterate over y
-	--> carry is 99.99% of times very small, so the while loop doesnt run much
-	--> overall faster
-
-	local rLimbs: {number} = result.limbs
-
-	--> from right to left
-	local carry: number = 0
-	for i: number, yLimb: number in yLimbs do
-		local sum: number = rLimbs[i] + yLimb + carry
-
-		if sum >= BASE then
-			carry = 1
-			rLimbs[i] = sum - BASE
-			continue
-		end
-
-		carry = 0
-		rLimbs[i] = sum
-	end
-
-	if carry == 0 then return result end
-
-	--> carry loop
-	local resultIndex: number = #yLimbs
-	while true do
-		resultIndex += 1
-		local sum: number = (rLimbs[resultIndex] or 0) + 1
-
-		if sum >= BASE then
-			rLimbs[resultIndex] = sum - BASE
-			continue
-		end
-
-		rLimbs[resultIndex] = sum
-		break
-	end
-
-	return result
-end
 
 local function MulKaratsuba(x: AptInt, y: AptInt): AptInt
 	local m2: number = (max(#x.limbs, #y.limbs) + 1)//2
@@ -413,10 +359,9 @@ local function DivKnuths(self: AptInt, divisor: AptInt)
 
 	--> d1. normalize (get Vn and Un)
 	local D: number = BASE // (V[n] + 1)
-	local Dint: AptInt = AptInt.new({D})
 
-	local Vn: {number} = divisor:MultiplyRaw(Dint).limbs
-	local Un: AptInt = self:MultiplyRaw(Dint)
+	local Vn: {number} = MulByInt(divisor, D).limbs
+	local Un: AptInt = MulByInt(self, D)
 	local UnLimbs: {number} = Un.limbs
 
 	local Vnn: number = Vn[n]
@@ -594,10 +539,10 @@ local function DivBurnikelZiegler(A: AptInt, B: AptInt): (AptInt, AptInt)
 
 	--> 3. set sigma to normalize B and A, so that B[#B] >= BASE/2
 	--> sigma is single-limb, so multiplication here is linear.
-	local sigma: AptInt = AptInt.new({BASE // (B.limbs[s] + 1)})
+	local sigma: number = BASE // (B.limbs[s] + 1)
 	local shift: number = n-s
 
-	local bShifted: AptInt, aShifted: AptInt = B:MultiplyRaw(sigma), A:MultiplyRaw(sigma)
+	local bShifted: AptInt, aShifted: AptInt = MulByInt(B, sigma), MulByInt(A, sigma)
 	if shift > 0 then
 		bShifted = bShifted:LeftShift(shift)
 		aShifted = aShifted:LeftShift(shift)
@@ -631,7 +576,7 @@ local function DivBurnikelZiegler(A: AptInt, B: AptInt): (AptInt, AptInt)
 	end
 
 	StripLeadingZeros(quotient)
-	z = z:DivideRaw(sigma)
+	z = z:DivideRaw(AptInt.new({sigma}))
 	return quotient, z
 end
 
@@ -660,9 +605,6 @@ end
 local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
 	-- https://gmplib.org/manual/Square-Root-Algorithm
 	-- https://en.wikipedia.org/wiki/Integer_square_root#Karatsuba_square_root_algorithm
-	if n.signum ~= 1 then
-		return AptInt.new(), AptInt.new()
-	end
 
 	--> needed here too
 	local limbLen: number = #n.limbs
@@ -718,10 +660,10 @@ end
 AP_NEG_ONE, AP_ONE, AP_THREE = AptInt.new(-1), AptInt.new({1}),  AptInt.new({3})
 
 -- Returns a copy of the AptInt.
-function AptInt.clone(n: AptInt): AptInt
+function AptInt:clone(): AptInt
 	return setmetatable({
-		limbs = tclone(n.limbs),
-		signum = n.signum
+		limbs = tclone(self.limbs),
+		signum = self.signum
 	}, AptInt) :: AptInt
 end
 
@@ -759,42 +701,8 @@ function AptInt:AddRaw(term: AptInt, inPlace: boolean?): AptInt
 	elseif selfSign ~= termSign then -- +a+(-b)=a-b
 		return self:SubtractRaw(NegateRef(term), inPlace)
 	end
-
-	local termLimbs: {number}, selfLimbs: {number} = term.limbs, self.limbs
-	local termLen: number, selfLen: number = #termLimbs, #selfLimbs
-
-	--> choose the longer number to avoid extra "or 0" with selfDigit
-	local result: AptInt
-	if selfLen < termLen then
-		result = term:clone()
-		selfLimbs, termLimbs = termLimbs, selfLimbs
-	else
-		result = (inPlace and self or self:clone())
-	end
 	
-	if abs(termLen - selfLen) > MIN_MINADD_OFFSET then
-		return MinAdd(selfLimbs, termLimbs, result)
-	end
-
-	local rLimbs: {number} = result.limbs
-
-	--> from right to left
-	local carry: number = 0
-	for i: number, selfDigit: number in selfLimbs do
-		local sum: number = selfDigit + (termLimbs[i] or 0) + carry
-
-		if sum >= BASE then
-			carry = 1
-			rLimbs[i] = sum - BASE
-			continue
-		end
-
-		carry = 0
-		rLimbs[i] = sum
-	end
-
-	if carry > 0 then tinsert(rLimbs, carry) end
-	return result
+	return AptInt.new(Addition.AddLimbs(self.limbs, term.limbs, inPlace))
 end
 
 -- Returns an AptInt equal to <code>a - b</code>.
@@ -818,27 +726,8 @@ function AptInt:SubtractRaw(term: AptInt, inPlace: boolean?): AptInt
 	if self:LowerThanRaw(term) then
 		return term:SubtractRaw(self):Negate(true)
 	end
-
-	local result: AptInt = (inPlace and self or self:clone())
-	local rLimbs: {number} = result.limbs
-
-	local termLimbs: {number} = term.limbs
-	--> from right to left
-	local borrow: number = 0
-	for i: number, digit: number in rLimbs do
-		local diff: number = digit - (termLimbs[i] or 0) - borrow
-		if diff < 0 then
-			borrow = 1
-			rLimbs[i] = diff + BASE
-			continue
-		end
-
-		borrow = 0
-		rLimbs[i] = diff
-	end
-
-	StripLeadingZeros(result)
-	return result
+	
+	return AptInt.new(Subtraction.SubLimbs(self.limbs, term.limbs, inPlace))
 end
 
 -- Returns an AptInt equal to <code>a * b</code>.
@@ -1289,10 +1178,6 @@ AptInt.__len = function(n: AptInt): number
 	
 	local limbs: {number} = n.limbs
 	return floor(log10(limbs[#limbs]) + (#limbs - 1) * RADIX_LEN_CONST) + 1
-end
-
-function AptInt.Extend(func: (typeof(AptInt)) -> ())
-	func(AptInt)
 end
 
 return AptInt
