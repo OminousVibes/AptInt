@@ -118,11 +118,12 @@ function Mul.MulLimbs(self: {number}, factor: {number}): {number}
 	
 	if selfLen < KARATSUBA_THRESHOLD or factorLen < KARATSUBA_THRESHOLD then
 		return Mul.MulLimbsBasecase(self, factor)
-	elseif selfLen < TOOM3_THRESHOLD or factorLen < TOOM3_THRESHOLD then
-		return Mul.MulKaratsuba(self, factor)
 	end
+	--[[elseif selfLen < TOOM3_THRESHOLD or factorLen < TOOM3_THRESHOLD then
+		return Mul.MulKaratsuba(self, factor)
+	end]]
 	
-	local result: {number} = Mul.MulToom3(self, factor)
+	local result: {number} = Mul.MulKaratsuba(self, factor)
 	StripLeadingZeros(result)
 	return result
 end

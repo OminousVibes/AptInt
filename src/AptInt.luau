@@ -11,12 +11,13 @@
 --]]
 -- ===============================================================
 
-local AptInt = {} :: any
+local AptInt = {}
 AptInt.__index = AptInt
 
 local Add = require("./Modules/Add")
 local Sub = require("./Modules/Sub")
 local Mul = require("./Modules/Mul")
+local Cmp = require("./Modules/Cmp")
 local Type = require("./Type")
 
 export type AptInt = Type.AptInt
@@ -252,42 +253,6 @@ local function MulToom3(x: AptInt, y: AptInt): AptInt
 
 	result.signum = x.signum * y.signum
 	return result
-end
-
-local function LowerThanAbsolute(x: AptInt, y: AptInt): boolean
-	local xLimbs: {number}, yLimbs: {number} = x.limbs, y.limbs
-
-	local xLen: number, yLen: number = #xLimbs, #yLimbs
-	if xLen < yLen then
-		return true
-	elseif yLen < xLen then
-		return false
-	end
-
-	for i: number = xLen, 1, -1 do
-		local xDigit: number, yDigit: number = xLimbs[i], yLimbs[i]
-		if xDigit == yDigit then continue end
-
-		return xDigit < yDigit
-	end
-
-	return false 
-end
-
-local function EqualsAbsolute(x: AptInt, y: AptInt): boolean
-	local xLimbs: {number}, yLimbs: {number} = x.limbs, y.limbs
-
-	if #xLimbs ~= #yLimbs then
-		return false
-	end
-
-	for i: number, xLimb: number in xLimbs do
-		if xLimb == yLimbs[i] then continue end
-
-		return false
-	end
-
-	return true 
 end
 
 --> divsion stuff
@@ -938,7 +903,7 @@ function AptInt:EqualsRaw(num: AptInt): boolean
 		return false
 	end
 
-	return EqualsAbsolute(self, num)
+	return Cmp.Equals(self, num)
 end
 
 -- Returns true if <code>self < num</code>.
@@ -952,10 +917,10 @@ function AptInt:LowerThanRaw(num: AptInt): boolean
 
 	local bothNegative: boolean = (selfSign == numSign and selfSign == -1)
 	if bothNegative then
-		return LowerThanAbsolute(num, self)
+		return Cmp.LowerThan(num.limbs, self.limbs)
 	end
 
-	return LowerThanAbsolute(self, num)
+	return Cmp.LowerThan(self.limbs, num.limbs)
 end
 
 -- Returns true if <code>self <= num</code>.
@@ -969,25 +934,11 @@ function AptInt:LowerOrEqualToRaw(num: AptInt): boolean
 	end
 
 	local bothNegative: boolean = (selfSign == numSign and selfSign == -1)
-	--> check their lengths. for negative, the lowest is with the most limbs, and for positive its the lowest
-	if bothNegative and selfLen >= numLen then
-		return true
-	elseif selfLen <= numLen then -- both positive
-		return true
-	end
-
-	local selfLimbs: {number}, numlimbs: {number} = self.limbs, num.limbs
 	if bothNegative then
-		selfLimbs, numlimbs = numlimbs, selfLimbs
+		return Cmp.LowerOrEqualTo(num.limbs, self.limbs)
 	end
-
-	for i: number = #selfLimbs, 1, -1 do
-		local sDigit: number, nDigit: number = selfLimbs[i], numlimbs[i] or 0
-		if sDigit == nDigit then continue end
-		return sDigit <= nDigit
-	end
-
-	return true 
+	
+	return Cmp.LowerOrEqualTo(self.limbs, num.limbs)
 end
 
 -- ==================
