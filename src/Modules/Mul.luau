@@ -13,8 +13,6 @@ local Sub = require("./Sub")
 --> OPTIMIAZTION FUNCTION CONSTANTS
 -- ================================
 
-local StripLeadingZeros: ({number}) -> () = Utils.StripLeadingZeros
-
 local GetUpper: ({number}, number) -> {number} = Utils.GetUpper
 local GetLower: ({number}, number) -> {number} = Utils.GetLower
 local GetSlice: ({number}, number, number) -> {number} = Utils.GetSlice
@@ -88,7 +86,7 @@ function Mul.MulLimbsBasecase(self: {number}, factor: {number}): {number}
 		result[i] = p
 	end
 
-	StripLeadingZeros(result)
+	Utils.StripLeadingZeros(result)
 	return result
 end
 
@@ -124,7 +122,7 @@ function Mul.MulLimbs(self: {number}, factor: {number}): {number}
 	end]]
 	
 	local result: {number} = Mul.MulKaratsuba(self, factor)
-	StripLeadingZeros(result)
+	Utils.StripLeadingZeros(result)
 	return result
 end
 

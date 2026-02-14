@@ -17,6 +17,8 @@ AptInt.__index = AptInt
 local Add = require("./Modules/Add")
 local Sub = require("./Modules/Sub")
 local Mul = require("./Modules/Mul")
+local Div = require("./Modules/Div")
+local Sqrt = require("./Modules/Sqrt")
 local Cmp = require("./Modules/Cmp")
 local Type = require("./Type")
 
@@ -273,116 +275,6 @@ local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt
 	return remainder
 end
 
---> KNUTHS
-local function DivKnuths(self: AptInt, divisor: AptInt)
-	--> d0. defs
-	local U: {number}, V: {number} = self.limbs, divisor.limbs
-
-	local n: number = #V
-	local m: number = #U - n
-
-	--> d1. normalize (get Vn and Un)
-	local D: number = BASE // (V[n] + 1)
-
-	local Vn: {number} = Mul.MulByInt(divisor.limbs, D)
-	local Un: AptInt = AptInt.new(Mul.MulByInt(self.limbs, D))
-	local UnLimbs: {number} = Un.limbs
-
-	local Vnn: number = Vn[n]
-	local penultimateVn: number = Vn[n-1] or 0
-
-	local quotient: AptInt = AptInt.new(tcreate(m + 1, 0))
-	local qLimbs: {number} = quotient.limbs
-
-	--> d2. init j
-	local qhat: number, rhat: number = 0, 0
-	for j: number = m, 0, -1 do
-		--> d3. calculate qhat and rhat
-
-		-- bigints for qhat and rhat are not needed, because un[x] is at most BASE
-		-- currently, BASE * BASE + BASE < 2^53
-		local nPlusJ: number = n + j + 1
-		local top: number = (UnLimbs[nPlusJ] or 0) * BASE + (UnLimbs[nPlusJ - 1] or 0)
-		qhat = top // Vnn
-		rhat = top % Vnn
-
-		if qhat == 0 then continue end
-
-		--> first correction
-		if qhat * penultimateVn > rhat * BASE + (UnLimbs[nPlusJ - 2] or 0) then
-			qhat -= 1
-			rhat += Vnn
-
-			--> second correction
-			if rhat < BASE and qhat * penultimateVn > rhat * BASE + (UnLimbs[nPlusJ - 2] or 0) then
-				qhat -= 1
-			end
-		end
-
-		--> d4. multiply & subtract
-		local carry: number = 0
-		local borrow: number = 0
-
-		for i: number = 1, n do
-			local p: number = qhat * Vn[i] + carry
-			carry = p // BASE
-			local pDigit: number = p % BASE
-
-			local diff: number = UnLimbs[i + j] - pDigit - borrow
-			if diff < 0 then
-				borrow = 1
-				diff += BASE
-			else
-				borrow = 0
-			end
-
-			UnLimbs[i + j] = diff
-		end
-
-		local lastSub: number = (UnLimbs[nPlusJ] or 0) - carry - borrow
-		UnLimbs[nPlusJ] = lastSub
-
-		--> d6. add back
-		if lastSub >= 0 then
-			qLimbs[j + 1] = qhat
-			continue
-		end
-
-		qLimbs[j + 1] = qhat - 1
-		carry = 0
-
-		for i: number = 1, n do
-			local sum: number = UnLimbs[i + j] + Vn[i] + carry
-
-			if sum >= BASE then
-				carry = 1
-				sum -= BASE
-			else
-				carry = 0
-			end
-
-			UnLimbs[i + j] = sum
-		end
-
-		UnLimbs[nPlusJ] = (UnLimbs[nPlusJ] + carry) % BASE
-	end
-
-	--> d8. unnormalize
-	local carry: number = 0
-
-	for i: number = #UnLimbs, 1, -1 do
-		local x: number = carry * BASE + UnLimbs[i]
-
-		carry = x % D 
-		UnLimbs[i] = x // D
-	end
-
-	StripLeadingZeros(Un)
-	StripLeadingZeros(quotient)
-
-	return quotient, Un
-end
-
 --> BURNIKEL ZIEGLER
 local function DivBZ3n2n(a1: AptInt, a2: AptInt, a3: AptInt, b1: AptInt, b2: AptInt): (AptInt, AptInt)
 	--> Algorithm 2 from https://pure.mpg.de/rest/items/item_1819444_4/component/file_2599480/content
@@ -504,68 +396,6 @@ local function DivBurnikelZiegler(A: AptInt, B: AptInt): (AptInt, AptInt)
 	return quotient, z
 end
 
---> SQRT STUFF
-local function NewtonHeronSqrt(n: AptInt): AptInt
-	local prev2: AptInt = AP_NEG_ONE:clone()
-	local prev1: AptInt = AP_ONE:LeftShift((#n.limbs-1)//2) -- initial guess
-
-	while true do
-		local q: AptInt, _: AptInt = n:DivideRaw(prev1)
-		local x1: AptInt = prev1:AddRaw(q); Div2InPlace(x1)
-
-		local equals: boolean = EqualsAbsolute(x1, prev1)
-		if equals then
-			return x1
-		end
-
-		if EqualsAbsolute(x1, prev2) then
-			return (LowerThanAbsolute(x1, prev1) and x1 or prev1) -- min(x1, prev1)
-		end
-
-		prev2, prev1 = prev1, x1
-	end
-end
-
-local function KaratsubaSqrt(n: AptInt): (AptInt, AptInt)
-	-- https://gmplib.org/manual/Square-Root-Algorithm
-	-- https://en.wikipedia.org/wiki/Integer_square_root#Karatsuba_square_root_algorithm
-
-	--> needed here too
-	local limbLen: number = #n.limbs
-	if limbLen < SQRT_KARATSUBA_THRESHOLD then
-		local sq = NewtonHeronSqrt(n)
-		return sq, n:SubtractRaw(sq:MultiplyRaw(sq))
-	end
-
-	--> calculate a3, a1 and a0
-	local m: number = limbLen//4
-	local m2: number = m*2
-
-	local a3a2: AptInt = GetUpper(n, m2) -- m2+1
-	local a1: AptInt, a0: AptInt = GetSlice(n, m+1, m2), GetSlice(n, 1, m)
-
-	local s1: AptInt, r1: AptInt = KaratsubaSqrt(a3a2)
-	--local r1 = a3a2:SubtractRaw(s1:MultiplyRaw(s1))
-
-	--> divrem (r1*b + a1, 2*s1)
-	local q, u: AptInt = 
-		r1:LeftShift(m):AddRaw(a1, true)
-		:DivideRaw(s1:AddRaw(s1))
-
-	-- s=s1*b+q
-	-- r=u*b+a0-q^2
-	local s: AptInt = s1:LeftShift(m):AddRaw(q, true)
-	local r: AptInt = u:LeftShift(m):AddRaw(a0, true):SubtractRaw(q:MultiplyRaw(q), true)
-
-	--> correct
-	if r.signum == -1 then
-		r = r:AddRaw(s:AddRaw(s), true):SubtractRaw(AP_ONE, true)
-		s = s:SubtractRaw(AP_ONE, true)
-	end
-
-	return s, r
-end
-
 -- ====================
 --> METATABLE FUNCTIONS
 -- ====================
@@ -682,16 +512,15 @@ end
 
 -- Returns the quotient and remainder of a / b.
 function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
-	--> we use knuths algorithm D for division
-	--> its a very lengthy and ugly algorithm
-
 	local divSign: number, selfSign: number = divisor.signum, self.signum
 	local sameSign: boolean = divSign == selfSign
 
+	local U: {number}, V: {number} = self.limbs, divisor.limbs
+	
 	--> CASES
 	if divSign == 0 or selfSign == 0 then -- dividing by 0
 		return AptInt.new(), AptInt.new()
-	elseif LowerThanAbsolute(self, divisor) then
+	elseif Cmp.LowerThan(U, V) then
 		if selfSign == 1 and divSign == -1 then
 			return AP_NEG_ONE:clone(), divisor:AddRaw(self)
 		elseif selfSign == -1 and divSign == 1 then
@@ -701,57 +530,26 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 		end
 
 		return AptInt.new(), (self :: AptInt):clone()
-	elseif EqualsAbsolute(self, divisor) then -- -x/x = -1
+	elseif Cmp.Equals(U, V) then -- -x/x = -1
 		local div = AP_ONE:clone()
 		div.signum = selfSign / divSign
 
 		return div, AptInt.new()
 	end
 
-	local U: {number}, V: {number} = self.limbs, divisor.limbs
-
-	--> single limb division
-	if #V == 1 then
-		local div: number = V[1]
-
-		local quotient: AptInt = self:clone()
-		quotient.signum = selfSign/divSign
-
-		if div == 1 then
-			return quotient, AptInt.new()
-		end
-
-		local qLimbs: {number} = quotient.limbs
-		local carry: number = 0
-
-		for i: number = #U, 1, -1 do
-			local x: number = U[i] + carry * BASE
-			local qDigit: number = x // div
-
-			carry = x - qDigit * div
-			qLimbs[i] = qDigit
-		end
-
-		StripLeadingZeros(quotient)
-		if carry == 0 then
-			return quotient, AptInt.new()
-		end
-
-		local remainder = CorrectRemainder(self, divisor, AptInt.new({carry}))
-		return quotient, remainder
-	end
-
-	local quotient: AptInt, remainder: AptInt
-	local diff = #U - #V
-	if #V > BURNIKEL_THRESHOLD and #U > BURNIKEL_THRESHOLD and diff > MIN_BURNIKEL_OFFSET then
-		quotient, remainder = DivBurnikelZiegler(self, divisor)
+	
+	local quotientLimbs: {number}, remLimbs: {number}
+	
+	if #V == 1 then -- single limb division
+		quotientLimbs, remLimbs = Div.DivByInt(U, V[1])
 	else
-		quotient, remainder = DivKnuths(self, divisor)
+		quotientLimbs, remLimbs = Div.DivLimbs(U, V)
 	end
-
+	
+	local quotient: AptInt, remainder: AptInt = AptInt.new(quotientLimbs), AptInt.new(remLimbs)
+	
 	remainder = CorrectRemainder(self, divisor, remainder)
 	quotient.signum = selfSign / divSign
-
 	return quotient, remainder
 end
 
@@ -833,13 +631,8 @@ function AptInt:sqrt(): AptInt
 	if self.signum ~= 1 then
 		return AptInt.new()
 	end
-
-	if #(self :: AptInt).limbs >= SQRT_KARATSUBA_THRESHOLD then
-		local s, _ = KaratsubaSqrt(self)
-		return s
-	end
-
-	return NewtonHeronSqrt(self)
+	
+	return AptInt.new(Sqrt.ISqrt(self.limbs))
 end
 
 -- ==================
@@ -903,7 +696,7 @@ function AptInt:EqualsRaw(num: AptInt): boolean
 		return false
 	end
 
-	return Cmp.Equals(self, num)
+	return Cmp.Equals(self.limbs, num.limbs)
 end
 
 -- Returns true if <code>self < num</code>.
