@@ -14,8 +14,9 @@
 local AptInt = {} :: any
 AptInt.__index = AptInt
 
-local Addition = require("./Modules/Addition")
-local Subtraction = require("./Modules/Subtraction")
+local Add = require("./Modules/Add")
+local Sub = require("./Modules/Sub")
+local Mul = require("./Modules/Mul")
 local Type = require("./Type")
 
 export type AptInt = Type.AptInt
@@ -49,9 +50,7 @@ local sformat: (string, ...unknown) -> string = string.format
 --> NORMAL CONSTANTS
 -- =================
 
-local KARATSUBA_THRESHOLD: number = 45 -- in limbs, limit where karatsuba is faster than normal multiplication
 local SQRT_KARATSUBA_THRESHOLD: number = 32
-local TOOM3_THRESHOLD: number = 90
 local BURNIKEL_THRESHOLD: number = 280
 local MIN_BURNIKEL_OFFSET: number = 40
 
@@ -142,6 +141,21 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 --> PRIVATE FUNCTIONS
 -- ==================
 
+
+local function StripLeadingZeros(n: AptInt)
+	local limbs: {number} = n.limbs
+	while true do
+		local limbLen: number = #limbs
+		if limbLen == 1 or limbs[limbLen] ~= 0 then break end
+
+		limbs[limbLen] = nil
+	end
+
+	if #limbs == 1 and limbs[#limbs] == 0 then
+		n.signum = 0
+	end
+end
+
 local function ArgumentToAptInt(num: ValidMetamethodArgument?, errContext: string): AptInt
 	local bigint: AptInt;
 
@@ -176,25 +190,6 @@ local function Div2InPlace(n: AptInt)
 	StripLeadingZeros(n)
 end
 
-local function MulByInt(n: AptInt, m: number)
-	local result: AptInt = n:clone()
-	local rLimbs: {number} = result.limbs
-	local carry: number = 0
-	
-	for i: number, limb: number in result.limbs do
-		local product: number = limb * m + carry
-		
-		carry = product // BASE
-		rLimbs[i] = product % BASE
-	end
-	
-	if carry > 0 then
-		tinsert(rLimbs, carry)
-	end
-	
-	return result
-end
-
 local function NegateRef(n: AptInt): AptInt
 	return setmetatable({
 		limbs = n.limbs,
@@ -202,45 +197,9 @@ local function NegateRef(n: AptInt): AptInt
 	}, AptInt) :: AptInt
 end
 
---> these functions esentially do the same thing. this is horrible code, but i dont wanna refactor it.
-
---> get lower n limbs
-local function GetLower(int: AptInt, n: number): AptInt
-	return AptInt.new(tmove(int.limbs, 1, n, 1, {}))
-end
-
---> get upper n limbs
-local function GetUpper(int: AptInt, n: number): AptInt
-	return AptInt.new(tmove(int.limbs, n+1, #int.limbs, 1, {}))
-end
-
---> get limbs from startIdx to endIdx
-local function GetSlice(n: AptInt, startIdx: number, endIdx: number)
-	return AptInt.new(tmove(n.limbs, startIdx, endIdx, 1, {}))
-end
-
 -- =======================
 -- ALL SORTS OF ALGORITHMS
 -- =======================
-
-local function MulKaratsuba(x: AptInt, y: AptInt): AptInt
-	local m2: number = (max(#x.limbs, #y.limbs) + 1)//2
-
-	local low1: AptInt, low2: AptInt = GetLower(x, m2), GetLower(y, m2)
-	local high1: AptInt, high2: AptInt = GetUpper(x, m2), GetUpper(y, m2)
-
-	local z0: AptInt = low1:MultiplyRaw(low2)
-	local z1: AptInt = low1:AddRaw(high1, true):MultiplyRaw(low2:AddRaw(high2, true))
-	local z2: AptInt = high1:MultiplyRaw(high2)
-
-	-- result = z0 + ((z1 - z2 - z0) << m2) + (z2 << 2*m2)
-	local result: AptInt = z2
-		:LeftShift(m2):AddRaw(z1:SubtractRaw(z2:AddRaw(z0, true), true), true)
-		:LeftShift(m2):AddRaw(z0, true)
-	
-	result.signum = x.signum * y.signum
-	return result
-end
 
 local function MulToom3(x: AptInt, y: AptInt): AptInt
 	local largest: number = max(#x.limbs, #y.limbs)
@@ -360,8 +319,8 @@ local function DivKnuths(self: AptInt, divisor: AptInt)
 	--> d1. normalize (get Vn and Un)
 	local D: number = BASE // (V[n] + 1)
 
-	local Vn: {number} = MulByInt(divisor, D).limbs
-	local Un: AptInt = MulByInt(self, D)
+	local Vn: {number} = Mul.MulByInt(divisor.limbs, D)
+	local Un: AptInt = AptInt.new(Mul.MulByInt(self.limbs, D))
 	local UnLimbs: {number} = Un.limbs
 
 	local Vnn: number = Vn[n]
@@ -702,7 +661,8 @@ function AptInt:AddRaw(term: AptInt, inPlace: boolean?): AptInt
 		return self:SubtractRaw(NegateRef(term), inPlace)
 	end
 	
-	return AptInt.new(Addition.AddLimbs(self.limbs, term.limbs, inPlace))
+	local result: {number} = Add.AddLimbs(self.limbs, term.limbs, inPlace)
+	return (inPlace and self or AptInt.new(result))
 end
 
 -- Returns an AptInt equal to <code>a - b</code>.
@@ -727,7 +687,8 @@ function AptInt:SubtractRaw(term: AptInt, inPlace: boolean?): AptInt
 		return term:SubtractRaw(self):Negate(true)
 	end
 	
-	return AptInt.new(Subtraction.SubLimbs(self.limbs, term.limbs, inPlace))
+	local result: {number} = Sub.SubLimbs(self.limbs, term.limbs, inPlace)
+	return (inPlace and self or AptInt.new(result))
 end
 
 -- Returns an AptInt equal to <code>a * b</code>.
@@ -738,64 +699,20 @@ function AptInt:MultiplyRaw(factor: AptInt, i: boolean?): AptInt
 	if selfSign == 0 or factorSign == 0 then
 		return AptInt.new()
 	end
-
-	local selfLimbs: {number} = self.limbs
+	
 	local factorLimbs: {number} = factor.limbs
-	local factorLen: number = #factorLimbs
-	local selfLen: number = #selfLimbs
-
+	
 	--> single limb multiplication
-	if factorLen == 1 then
-		local mul: number = factorLimbs[1]
-		
-		local result: AptInt
-		if mul == 1 then
-			result = self:clone()
-		else
-			result = MulByInt(self, mul)
-		end
-		
-		result.signum = selfSign * factorSign
-		return result
+	local result: {number}
+	if #factorLimbs == 1 then
+		result = Mul.MulByInt(self.limbs, factorLimbs[1])
+	else
+		result = Mul.MulLimbs(self.limbs, factorLimbs)
 	end
 	
-	if selfLen > TOOM3_THRESHOLD and factorLen > TOOM3_THRESHOLD then
-		local result: AptInt = MulToom3(self, factor)
-		StripLeadingZeros(result)
-		return result
-	elseif selfLen > KARATSUBA_THRESHOLD and factorLen > KARATSUBA_THRESHOLD then
-		return MulKaratsuba(self, factor)
-	end
-	
-	--> normal o(n^2) algorithm
-	local len: number = selfLen + factorLen
-	local result: AptInt = AptInt.new(tcreate(len, 0))
-	local rLimbs: {number} = result.limbs
-
-	local carry: number = 0
-	factorLen -= 1
-	for i: number = 1, len do
-		local p: number = carry
-		local iplus: number = i + 1
-		
-		for j: number = max(i - factorLen, 1), min(i, selfLen) do
-			p += selfLimbs[j] * factorLimbs[iplus - j]
-		end
-
-		-- apply carry to current limb 
-		if p >= BASE then 
-			carry = p // BASE 
-			rLimbs[i] = p % BASE
-			continue
-		end 
-
-		carry = 0
-		rLimbs[i] = p
-	end
-
-	StripLeadingZeros(result)
-	result.signum = selfSign * factorSign
-	return result
+	local metatblResult: AptInt = AptInt.new(result)
+	metatblResult.signum = selfSign * factorSign
+	return metatblResult
 end
 
 -- Returns the quotient and remainder of a / b.

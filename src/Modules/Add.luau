@@ -1,3 +1,7 @@
+--!native
+--!strict
+--!optimize 2
+
 local Addition = {}
 
 local Constants = require("../Constants")
@@ -10,7 +14,7 @@ local tinsert: ({number}, number) -> () = table.insert
 local BASE: number = Constants.BASE
 local MIN_MINADD_OFFSET: number = Constants.MIN_MINADD_OFFSET
 
-local function MinAdd(term: {number}, result: AptInt): {number}
+local function MinAdd(term: {number}, result: {number}): {number}
 	--> since result has self's limbs, we can just iterate over y
 	--> carry is 99.99% of times very small, so the while loop doesnt run much
 	--> overall faster
@@ -50,7 +54,7 @@ local function MinAdd(term: {number}, result: AptInt): {number}
 	return result
 end
 
-function Addition.AddLimbs(self: {number}, term: {number}, inPlace: boolean?)
+function Addition.AddLimbs(self: {number}, term: {number}, inPlace: boolean?): {number}
 	local selfLen: number, termLen: number = #self, #term
 
 	--> choose the longer number to avoid extra "or 0" with selfDigit
