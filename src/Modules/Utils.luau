@@ -36,12 +36,12 @@ function Utils.GetSlice(limbs: {number}, startIdx: number, endIdx: number): {num
 	return tmove(limbs, startIdx, endIdx, 1, {})
 end
 
-function Utils.LeftShift(limbs: {number}, amount: number)
+function Utils.LeftShift(limbs: {number}, amount: number): {number}
 	-- this is the fastest way to leftshift
 	return tmove(limbs, 1, #limbs, amount+1, tcreate(amount, 0))
 end
 
-function Utils.DivByInt(limbs: {number}, div: number)
+function Utils.DivByInt(limbs: {number}, div: number): ({number}, {number})
 	local quotient: {number} = tclone(limbs)
 
 	local carry: number = 0

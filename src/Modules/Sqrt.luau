@@ -6,10 +6,30 @@ local Sqrt = {}
 
 local Utils = require("./Utils")
 local Constants = require("../Constants")
+local Add = require("./Add")
+local Sub = require("./Sub")
+local Mul = require("./Mul")
+local Div = require("./Div")
 local Cmp = require("./Cmp")
+
+-- ================================
+--> OPTIMIAZTION FUNCTION CONSTANTS
+-- ================================
+
+local GetUpper: ({number}, number) -> {number} = Utils.GetUpper
+local GetLower: ({number}, number) -> {number} = Utils.GetLower
+local GetSlice: ({number}, number, number) -> {number} = Utils.GetSlice
+local LeftShift: ({number}, number) -> {number} = Utils.LeftShift
+
+local AddLimbs: ({number}, {number}, boolean?) -> {number} = Add.AddLimbs
+local SubLimbs: ({number}, {number}, boolean?) -> {number} = Sub.SubLimbs
 
 local Equals: ({number}, {number}) -> boolean = Cmp.Equals
 local LowerThan: ({number}, {number}) -> boolean = Cmp.LowerThan
+
+-- =================
+--> NORMAL CONSTANTS
+-- =================
 
 local tcreate: (number, number) -> {number} = table.create
 
@@ -23,8 +43,8 @@ local function NewtonHeronSqrt(n: {number})
 	prev1[#prev1] = 1
 
 	while true do
-		local q: {number}, _: {number} = n:DivideRaw(prev1)
-		local x1: {number} = prev1:AddRaw(q); Div2InPlace(x1)
+		local q: {number}, _: {number} = Div.DivLimbs(n, prev1)
+		local x1: {number} = Div.DivByInt(AddLimbs(prev1, q), 2)
 
 		if Equals(x1, prev1) then
 			return x1
@@ -43,10 +63,10 @@ local function KaratsubaSqrt(n: {number}): ({number}, {number})
 	-- https://en.wikipedia.org/wiki/Integer_square_root#Karatsuba_square_root_algorithm
 
 	--> needed here too
-	local limbLen: number = #n.limbs
+	local limbLen: number = #n
 	if limbLen < SQRT_KARATSUBA_THRESHOLD then
 		local sq = NewtonHeronSqrt(n)
-		return sq, n:SubtractRaw(sq:MultiplyRaw(sq))
+		return sq, SubLimbs(n, Mul.MulLimbs(sq, sq))
 	end
 
 	--> calculate a3, a1 and a0
@@ -60,19 +80,23 @@ local function KaratsubaSqrt(n: {number}): ({number}, {number})
 	--local r1 = a3a2:SubtractRaw(s1:MultiplyRaw(s1))
 
 	--> divrem (r1*b + a1, 2*s1)
-	local q, u: {number} = 
-		r1:LeftShift(m):AddRaw(a1, true)
-		:DivideRaw(s1:AddRaw(s1))
+	local r1b: {number} = AddLimbs(LeftShift(r1, m), a1, true)
+	local ds1: {number} = AddLimbs(s1, s1)
+	local q: {number}, u: {number} = Div.DivLimbs(r1b, ds1)
 
 	-- s=s1*b+q
 	-- r=u*b+a0-q^2
-	local s: {number} = s1:LeftShift(m):AddRaw(q, true)
-	local r: {number} = u:LeftShift(m):AddRaw(a0, true):SubtractRaw(q:MultiplyRaw(q), true)
-
+	local s: {number} = AddLimbs(LeftShift(s1, m), q, true)
+	
+	local qSquared: {number} = Mul.MulLimbs(q, q)
+	local r: {number} = AddLimbs(LeftShift(u, m), a0, true)
+	local willCorrect: boolean = Cmp.LowerThan(r, qSquared) -- if r will be negative
+	r = SubLimbs(r, qSquared, true)
+	
 	--> correct
-	if r.signum == -1 then
-		r = r:AddRaw(s:AddRaw(s), true):SubtractRaw(AP_ONE, true)
-		s = s:SubtractRaw(AP_ONE, true)
+	if willCorrect then
+		r = SubLimbs(AddLimbs(r, AddLimbs(s, s), true), {1}, true)
+		s = SubLimbs(s, {1}, true)
 	end
 
 	return s, r

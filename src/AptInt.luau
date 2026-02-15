@@ -14,11 +14,13 @@
 local AptInt = {}
 AptInt.__index = AptInt
 
+local Constants = require("./Constants")
 local Add = require("./Modules/Add")
 local Sub = require("./Modules/Sub")
 local Mul = require("./Modules/Mul")
 local Div = require("./Modules/Div")
 local Sqrt = require("./Modules/Sqrt")
+local Pow = require("./Modules/Pow")
 local Cmp = require("./Modules/Cmp")
 local Type = require("./Type")
 
@@ -31,7 +33,6 @@ export type ValidConstructor = Type.ValidConstructor
 -- ================================
 
 local log10: (number) -> number = math.log10
-local log: (number, number) -> number = math.log
 local floor: (number) -> number = math.floor
 local ceil: (number) -> number = math.ceil
 local max: (number, number) -> number = math.max
@@ -53,17 +54,12 @@ local sformat: (string, ...unknown) -> string = string.format
 --> NORMAL CONSTANTS
 -- =================
 
-local BURNIKEL_THRESHOLD: number = 280
-local MIN_BURNIKEL_OFFSET: number = 40
+local BASE: number = Constants.BASE
 
-local BASE_POW: number = 24 -- MUST SATISFY: 2^(BASE_POW*2) < 2^53, because of multiplyraw and divideraw
-local BASE: number = 2^24 -- we use base 2^24 or else multiplication goes over 2^53
-local BASE_MASK: number = 0xFFFFFF -- BASE - 1
+local RADIX_LEN_CONST: number = Constants.RADIX_LEN_CONST
+local RADIX_CHUNK_SIZE: number = Constants.RADIX_CHUNK_SIZE
 
-local RADIX_LEN_CONST: number = 7.224719895935548 -- BASE_POW * log10(2)
-local RADIX_CHUNK_SIZE: number = 10^8
-
-local AP_NEG_ONE: AptInt, AP_ONE: AptInt, AP_THREE: AptInt
+local AP_NEG_ONE: AptInt, AP_ONE: AptInt
 
 --> CONSTRUCTOR
 local typeConstructors: {[string]: (any) -> ({number}, number)} = {
@@ -163,20 +159,6 @@ local function ArgumentToAptInt(num: ValidMetamethodArgument?, errContext: strin
 	return bigint
 end
 
-local function Div2InPlace(n: AptInt)
-	local limbs: {number} = n.limbs
-	local carry: number = 0
-
-	for i: number = #limbs, 1, -1 do
-		local x: number = limbs[i] + carry * BASE
-
-		carry = x % 2
-		limbs[i] = x // 2
-	end
-
-	StripLeadingZeros(n)
-end
-
 local function NegateRef(n: AptInt): AptInt
 	return setmetatable({
 		limbs = n.limbs,
@@ -222,7 +204,7 @@ function AptInt.new(num: ValidConstructor): AptInt
 end
 
 --> this is ugly. needed constants in MulToom3 and division
-AP_NEG_ONE, AP_ONE, AP_THREE = AptInt.new(-1), AptInt.new({1}),  AptInt.new({3})
+AP_NEG_ONE, AP_ONE = AptInt.new(-1), AptInt.new({1})
 
 -- Returns a copy of the AptInt.
 function AptInt:clone(): AptInt
@@ -385,9 +367,10 @@ function AptInt:ModRaw(div: AptInt): AptInt
 end
 
 -- Returns a new AptInt equal to <code>a ^ b</code>.
-function AptInt:PowRaw(pow: AptInt)
+function AptInt:PowRaw(pow: AptInt): AptInt
 	local selfSign: number, powSign: number = self.signum, pow.signum
 	local selfLimbs: {number}, powLimbs: {number} = self.limbs, pow.limbs
+	
 	--> CASES
 	if powSign == 0 then
 		return AP_ONE:clone()
@@ -401,44 +384,21 @@ function AptInt:PowRaw(pow: AptInt)
 		return AP_ONE:clone()
 	end
 
-	local result: AptInt = AP_ONE:clone()
-	local selfClone: AptInt = self:clone()
-
-	--> single-limb exponentiation
-	if #powLimbs == 1 then
-		local n: number = powLimbs[1]
-		while n > 0 do
-			if n % 2 == 1 then
-				result = selfClone:MultiplyRaw(result)
-			end
-
-			selfClone = selfClone:MultiplyRaw(selfClone)
-			n //= 2
-		end
-
-		return result
+	local resultLimbs: {number}
+	
+	if #powLimbs == 1 then -- single-limb exponentiation
+		resultLimbs =  Pow.PowByInt(selfLimbs, powLimbs[1])
+	else
+		resultLimbs = Pow.PowLimbs(selfLimbs, powLimbs)
 	end
-
-	--> exponentiation by squaring
-	local powClone: AptInt = pow:clone()
-
-	while powClone.signum == 1 do
-		if powClone.limbs[1] % 2 == 1 then
-			result = selfClone:MultiplyRaw(result)
-		end
-
-		selfClone = selfClone:MultiplyRaw(selfClone)
-		Div2InPlace(powClone)
-	end
-
-	return result
+	
+	return AptInt.new(resultLimbs)
 end
 
 -- Returns a new AptInt equal to <code>sqrt(n)</code>.
 function AptInt:sqrt(): AptInt
 	--> we compute the isqrt via Newton-Heron iteration for small numbers
 	--> for big numbers, we use karatsuba square root algorithm
-
 	if self.signum ~= 1 then
 		return AptInt.new()
 	end
