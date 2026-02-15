@@ -147,11 +147,11 @@ local function MulToom3(x: {number}, y: {number}): {number}
 	v2 = Mul.MulLimbs(v2, SubLimbs(AddLimbs(db1, db1, true), y0, true))
 	
 	--> all divisions here are single-limb, so they are linear.
-	v2 = Utils.DivByInt(SubLimbs(v2, vm1, true), 3)
-	local tm1: {number} = Utils.DivByInt(SubLimbs(v1, vm1), 2)
+	Utils.DivByInt(SubLimbs(v2, vm1, true), 3, true)
+	local tm1: {number} = Utils.DivByInt(SubLimbs(v1, vm1), 2, true)
 	v1 = SubLimbs(v1, v0, true)
 	
-	v2 = Utils.DivByInt(SubLimbs(v2, v1, true), 2)
+	Utils.DivByInt(SubLimbs(v2, v1, true), 2, true)
 	v1 = SubLimbs(SubLimbs(v1, tm1, true), vinf, true)
 	v2 = SubLimbs(v2, AddLimbs(vinf, vinf), true)
 	tm1 = SubLimbs(tm1, v2, true)

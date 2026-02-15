@@ -35,7 +35,7 @@ local tcreate: (number, number) -> {number} = table.create
 
 local SQRT_KARATSUBA_THRESHOLD: number = Constants.SQRT_KARATSUBA_THRESHOLD
 
-local function NewtonHeronSqrt(n: {number})
+local function NewtonHeronSqrt(n: {number}): {number}
 	local prev2: {number} = {1}
 	
 	--> AP_ONE:LeftShift((#n.limbs-1)//2) -- initial guess
@@ -44,7 +44,7 @@ local function NewtonHeronSqrt(n: {number})
 
 	while true do
 		local q: {number}, _: {number} = Div.DivLimbs(n, prev1)
-		local x1: {number} = Div.DivByInt(AddLimbs(prev1, q), 2)
+		local x1: {number} = Div.DivByInt(AddLimbs(prev1, q), 2, true)
 
 		if Equals(x1, prev1) then
 			return x1
@@ -102,7 +102,7 @@ local function KaratsubaSqrt(n: {number}): ({number}, {number})
 	return s, r
 end
 
-function Sqrt.ISqrtLimbs(limbs: {number})
+function Sqrt.ISqrtLimbs(limbs: {number}): {number}
 	if #limbs >= SQRT_KARATSUBA_THRESHOLD then
 		local s, _ = KaratsubaSqrt(limbs)
 		return s

@@ -260,7 +260,7 @@ local function DivBurnikelZiegler(A: {number}, B: {number}): ({number}, {number}
 		z = ri
 	end
 
-	z = Utils.DivByInt(z, sigma)
+	Utils.DivByInt(z, sigma, true)
 	return quotient, z
 end
 

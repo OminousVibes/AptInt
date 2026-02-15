@@ -41,8 +41,8 @@ function Utils.LeftShift(limbs: {number}, amount: number): {number}
 	return tmove(limbs, 1, #limbs, amount+1, tcreate(amount, 0))
 end
 
-function Utils.DivByInt(limbs: {number}, div: number): ({number}, {number})
-	local quotient: {number} = tclone(limbs)
+function Utils.DivByInt(limbs: {number}, div: number, inPlace: boolean?): ({number}, {number})
+	local quotient: {number} = (inPlace and limbs or tclone(limbs))
 
 	local carry: number = 0
 	for i: number = #limbs, 1, -1 do
