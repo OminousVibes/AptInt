@@ -24,9 +24,6 @@ local LeftShift: ({number}, number) -> {number} = Utils.LeftShift
 local AddLimbs: ({number}, {number}, boolean?) -> {number} = Add.AddLimbs
 local SubLimbs: ({number}, {number}, boolean?) -> {number} = Sub.SubLimbs
 
-local Equals: ({number}, {number}) -> boolean = Cmp.Equals
-local LowerThan: ({number}, {number}) -> boolean = Cmp.LowerThan
-
 -- =================
 --> NORMAL CONSTANTS
 -- =================
@@ -38,22 +35,22 @@ local SQRT_KARATSUBA_THRESHOLD: number = Constants.SQRT_KARATSUBA_THRESHOLD
 local function NewtonHeronSqrt(n: {number}): {number}
 	local prev2: {number} = {1}
 	
-	--> AP_ONE:LeftShift((#n.limbs-1)//2) -- initial guess
-	local prev1: {number} = tcreate(#n//2, 0)
+	-- local prev1 = AP_ONE:LeftShift((#n.limbs-1)//2) -- initial guess
+	local prev1: {number} = tcreate(#n//2, 0)-- ^^
 	prev1[#prev1] = 1
-
+	
 	while true do
 		local q: {number}, _: {number} = Div.DivLimbs(n, prev1)
 		local x1: {number} = Div.DivByInt(AddLimbs(prev1, q), 2, true)
-
-		if Equals(x1, prev1) then
+		
+		if Cmp.Equals(x1, prev1) then
 			return x1
 		end
-
-		if Equals(x1, prev2) then
-			return (LowerThan(x1, prev1) and x1 or prev1) -- min(x1, prev1)
+		
+		if Cmp.Equals(x1, prev2) then
+			return (Cmp.LowerThan(x1, prev1) and x1 or prev1) -- min(x1, prev1)
 		end
-
+		
 		prev2, prev1 = prev1, x1
 	end
 end

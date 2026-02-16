@@ -311,9 +311,10 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	local U: {number}, V: {number} = self.limbs, divisor.limbs
 	
 	--> CASES
+	local comparison: number = Cmp.Compare(U, V)
 	if divSign == 0 or selfSign == 0 then -- dividing by 0
 		return FromLimbs({}), FromLimbs({})
-	elseif Cmp.LowerThan(U, V) then
+	elseif comparison == -1 then -- U < V
 		if selfSign == 1 and divSign == -1 then
 			return AP_NEG_ONE:clone(), divisor:AddRaw(self)
 		elseif selfSign == -1 and divSign == 1 then
@@ -323,13 +324,12 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 		end
 
 		return FromLimbs({}), (self :: AptInt):clone()
-	elseif Cmp.Equals(U, V) then -- -x/x = -1
+	elseif comparison == 0 then -- U == V, x/x = 1
 		local div: AptInt = AP_ONE:clone()
 		div.signum = selfSign / divSign
 
 		return div, FromLimbs({})
 	end
-
 	
 	local quotientLimbs: {number}, remLimbs: {number}
 	

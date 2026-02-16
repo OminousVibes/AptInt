@@ -15,11 +15,11 @@ function Cmp.LowerThan(x: {number}, y: {number}): boolean
 	elseif xLen > yLen then
 		return false
 	end
-
+	
 	for i: number = xLen, 1, -1 do
 		local xLimb: number, yLimb: number = x[i], y[i]
 		if xLimb == yLimb then continue end
-
+		
 		return xLimb < yLimb
 	end
 
@@ -34,7 +34,7 @@ function Cmp.LowerOrEqualTo(x: {number}, y: {number}): boolean
 		return false
 	end
 
-	for i: number = #x, 1, -1 do
+	for i: number = xLen, 1, -1 do
 		local xLimb: number, yLimb: number = x[i], y[i]
 		if xLimb == yLimb then continue end
 		
@@ -55,6 +55,23 @@ function Cmp.Equals(x: {number}, y: {number}): boolean
 	end
 
 	return true 
+end
+
+function Cmp.Compare(x: {number}, y: {number}): number
+	local xLen: number, yLen: number = #x, #y
+	if xLen < yLen then
+		return -1
+	elseif xLen > yLen then
+		return 1
+	end
+	
+	for i: number = xLen, 1, -1 do
+		local xLimb: number, yLimb: number = x[i], y[i]
+		if xLimb == yLimb then continue end
+		return xLimb > yLimb and 1 or -1
+	end
+	
+	return 0
 end
 
 return Cmp
