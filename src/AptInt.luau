@@ -508,23 +508,15 @@ end
 --> OTHER FUNCTIONS
 -- ==================
 
--- Returns a new AptInt equal to <code>n * BASE<sup>n</sup></code>
+-- Returns a new AptInt equal to <code>self*BASE<sup>n</sup></code>
 function AptInt:LeftShift(n: number): AptInt
 	-- this is the fastest way to leftshift
 	return FromLimbs(tmove(self.limbs, 1, #self.limbs, n+1, tcreate(n, 0)))
 end
 
--- Returns a new AptInt equal to <code>n // 10<sup>(BASE * amount)</sup></code>
+-- Returns a new AptInt equal to <code>self/BASE<sup>n</sup></code>
 function AptInt:RightShift(n: number): AptInt
-	local result: AptInt = self:clone()
-
-	local tbl: {number} = result.limbs
-
-	for i: number = 1, n do
-		tremove(tbl, 1)
-	end
-
-	return result
+	return FromLimbs(tmove(self.limbs, 1, #self.limbs-n, 1, {}))
 end
 
 -- ============
