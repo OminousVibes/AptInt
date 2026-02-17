@@ -7,12 +7,12 @@
 This library provides [arbitrary precision arithmetic](https://en.wikipedia.org/wiki/Arbitrary-precision_arithmetic) capabilities implemented in just Luau. It uses a 2^24 word size to store numbers and can easily be configured to your liking.
 
 This library provides:
-- Functionality for all arithmetic operations ([`:AddRaw()` `:SubtractRaw()` `:MultiplyRaw()` `:DivideRaw()` `:PowRaw()` `:ModRaw()` `:sqrt()`](https://github.com/fosterchild1/AptInt/blob/main/docs/documentation.md#arithmetic))
-- Comparison functions ([`:LowerThanRaw()` `:EqualsRaw()` `:LowerOrEqualToRaw()`](https://github.com/fosterchild1/AptInt/blob/main/docs/documentation.md#comparison))
+- Functionality for all arithmetic operations ([`:AddRaw()` `:SubtractRaw()` `:MultiplyRaw()` `:DivideRaw()` `:PowRaw()` `:ModRaw()` `:sqrt()`](https://github.com/fosterchild1/AptInt/blob/main/docs/usage.md#arithmetic))
+- Comparison functions ([`:LowerThanRaw()` `:EqualsRaw()` `:LowerOrEqualToRaw()`](https://github.com/fosterchild1/AptInt/blob/main/docs/usage.md#comparison))
 - Metamethod support (`+ - * / ^ % < <= == >= =`)
-- Limb-wise [Left shift and right shift](https://github.com/fosterchild1/AptInt/blob/main/docs/documentation.md#other)
-- Conversion functions ([`:ToString()` `:ToNumber()`](https://github.com/fosterchild1/AptInt/blob/main/docs/documentation.md#conversion))
-- Extra utilities such as ([`:Abs()` `:Min()` `:Max()`](https://github.com/fosterchild1/AptInt/blob/main/docs/documentation.md#extensions))
+- Limb-wise [Left shift and right shift](https://github.com/fosterchild1/AptInt/blob/main/docs/usage.md#other)
+- Conversion functions ([`:ToString()` `:ToNumber()`](https://github.com/fosterchild1/AptInt/blob/main/docs/usage.md#conversion))
+- Extra utilities such as ([`:Abs()` `:Min()` `:Max()`](https://github.com/fosterchild1/AptInt/blob/main/docs/usage.md#extensions))
 
 The implementations are as performant as possible, so they have no safety checks, with the exception of the metamethods.
 
