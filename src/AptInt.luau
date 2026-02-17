@@ -4,7 +4,7 @@
 
 -- ===============================================================
 --[[ 
--- AptInt.luau // fosterchild 2025 - Luau implementation of BigInteger, with added typechecking.
+-- AptInt.luau // fosterchild 2026 - Luau implementation of BigInteger, with added typechecking.
 -- Licensed under The Unlicense.
 
 -- Documentation and source can be found at: https://github.com/fosterchild1/AptInt/
@@ -36,17 +36,15 @@ local log10: (number) -> number = math.log10
 local floor: (number) -> number = math.floor
 local ceil: (number) -> number = math.ceil
 local max: (number, number) -> number = math.max
-local min: (number, number) -> number = math.min
 local abs: (number) -> number = math.abs
 local sign: (number) -> number = math.sign
 
 -- the types here may be off, but native optimizes them more than their actual types
 local tcreate: <V>(number, V) -> {V} = table.create
 local tinsert: <V>({V}, V) -> () = table.insert
-local tremove: ({number}, number) -> number = table.remove
 local tconcat: <V>({V}, string?, number?, number?) -> string = table.concat
 local tmove: ({number}, number, number, number, {number}) -> {number} = table.move
-local tclone: ({number}) -> {number} = table.clone
+local tclone: <V>(V) -> V = table.clone
 
 local sformat: (string, ...unknown) -> string = string.format
 
@@ -59,7 +57,7 @@ local BASE: number = Constants.BASE
 local RADIX_LEN_CONST: number = Constants.RADIX_LEN_CONST
 local RADIX_CHUNK_SIZE: number = Constants.RADIX_CHUNK_SIZE
 
-local AP_NEG_ONE: AptInt, AP_ONE: AptInt
+local AP_NEG_ONE: AptInt
 
 --> CONSTRUCTOR
 local typeConstructors: {[string]: (any) -> ({number}, number)} = {
@@ -68,6 +66,8 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 		if isNegative then
 			str = str:sub(2, #str)
 		end
+		
+		if str == "0" then return {}, 0 end
 		
 		--> TODO: we could probably use algoritm 1.25 FastIntegerInput
 		--> convert from decimal to base 2^24
@@ -87,7 +87,7 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 				chunks[i] = val // BASE
 				carry = val % BASE
 			end
-
+			
 			tinsert(out, carry)
 			
 			--> stripleadingzeros
@@ -191,7 +191,6 @@ local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt
 	return remainder
 end
 
-
 -- ====================
 --> METATABLE FUNCTIONS
 -- ====================
@@ -207,7 +206,7 @@ function AptInt.new(num: ValidConstructor): AptInt
 end
 
 --> this is ugly. needed constants in MulToom3 and division
-AP_NEG_ONE, AP_ONE = AptInt.new(-1), FromLimbs({1})
+AP_NEG_ONE = AptInt.new(-1)
 
 -- Returns a copy of the AptInt.
 function AptInt:clone(): AptInt
@@ -221,10 +220,9 @@ function AptInt:Negate(inPlace: boolean): AptInt
 		return self
 	end
 
-	local result: AptInt = self:clone()
-	result.signum = -result.signum
-
-	return result
+	local negated: AptInt = tclone(self)
+	negated.signum = -negated.signum
+	return negated
 end
 
 -- =====================
@@ -237,9 +235,9 @@ function AptInt:AddRaw(term: AptInt, inPlace: boolean?): AptInt
 
 	--> CASES
 	if termSign == 0 then
-		return (inPlace and self or self:clone())
+		return (inPlace and self or tclone(self))
 	elseif selfSign == 0 then
-		local clone: AptInt = term:clone()
+		local clone: AptInt = tclone(term)
 		if inPlace then self = clone end
 
 		return clone
@@ -259,7 +257,7 @@ function AptInt:SubtractRaw(term: AptInt, inPlace: boolean?): AptInt
 
 	--> CASES
 	if termSign == 0 then -- b - 0 = 0
-		return (inPlace and self or self:clone())
+		return (inPlace and self or tclone(self))
 	elseif selfSign == 0 then -- 0 - b = -b
 		local negate: AptInt = term:Negate()
 		if inPlace then self = negate end
@@ -319,13 +317,11 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 			return AP_NEG_ONE:clone(), divisor:AddRaw(self)
 		elseif selfSign == -1 and divSign == 1 then
 			return AP_NEG_ONE:clone(), divisor:SubtractRaw(NegateRef(self))
-		elseif sameSign and divSign == -1 then
-			return FromLimbs({}), (self :: AptInt):clone()
 		end
 
-		return FromLimbs({}), (self :: AptInt):clone()
+		return FromLimbs({}), tclone(self)
 	elseif comparison == 0 then -- U == V, x/x = 1
-		local div: AptInt = AP_ONE:clone()
+		local div: AptInt = FromLimbs({1})
 		div.signum = selfSign / divSign
 
 		return div, FromLimbs({})
@@ -373,15 +369,15 @@ function AptInt:PowRaw(pow: AptInt): AptInt
 	
 	--> CASES
 	if powSign ~= 1 then
-		return AP_ONE:clone()
+		return FromLimbs({1})
 	elseif selfSign == 0 then
 		return FromLimbs({})
 	end
 
 	if #powLimbs == 1 and powLimbs[1] == 1 then
-		return self:clone()
+		return tclone(self)
 	elseif #selfLimbs == 1 and selfLimbs[1] == 1 then
-		return AP_ONE:clone()
+		return FromLimbs({1})
 	end
 
 	local resultLimbs: {number}
@@ -405,9 +401,9 @@ function AptInt:sqrt(): AptInt
 	return FromLimbs(Sqrt.ISqrtLimbs(self.limbs))
 end
 
--- ==================
+-- ==============
 --> QoL FUNCTIONS
--- ==================
+-- ==============
 
 -- Returns a new string representation of an AptInt
 function AptInt:ToString(): string
@@ -450,15 +446,50 @@ function AptInt:ToString(): string
 	return self.signum == -1 and `-{str}` or str
 end
 
-
 -- Returns a double equal to <code>tonumber(x)</code>
 function AptInt:ToNumber(): number
 	return tonumber(self:ToString()) :: number
 end
 
--- ==================
+-- Returns a new AptInt equal to <code>math.abs(self)</code>.
+function AptInt:Abs(inPlace: boolean?): AptInt
+	if inPlace then
+		self.signum = abs(self.signum)
+		return self
+	end
+	
+	local result: AptInt = tclone(self)
+	result.signum = abs(result.signum)
+	return result
+end
+
+-- Returns the maximum value among the arguments passed to the function.
+function AptInt:Max(...: AptInt)
+	local max: AptInt = self
+	
+	for _: number, num: AptInt in {...} do
+		if num:LowerThanRaw(max) then continue end
+		max = num
+	end
+	
+	return tclone(max)
+end
+
+-- Returns the minimum value among the arguments passed to the function.
+function AptInt:Min(...: AptInt)
+	local max: AptInt = self
+
+	for _: number, num: AptInt in {...} do
+		if max:LowerThanRaw(num) then continue end
+		max = num
+	end
+
+	return tclone(max)
+end
+
+-- =====================
 --> COMPARISON FUNCTIONS
--- ==================
+-- =====================
 
 -- Returns true if <code>self == num</code>.
 function AptInt:EqualsRaw(num: AptInt): boolean
@@ -489,7 +520,6 @@ end
 -- Returns true if <code>self <= num</code>.
 function AptInt:LowerOrEqualToRaw(num: AptInt): boolean
 	local selfSign: number, numSign: number = self.signum, num.signum
-	local selfLen: number, numLen: number = #self.limbs, #num.limbs
 
 	--> check sign
 	if selfSign <= numSign then
@@ -504,9 +534,9 @@ function AptInt:LowerOrEqualToRaw(num: AptInt): boolean
 	return Cmp.LowerOrEqualTo(self.limbs, num.limbs)
 end
 
--- ==================
+-- ================
 --> OTHER FUNCTIONS
--- ==================
+-- ================
 
 -- Returns a new AptInt equal to <code>self*BASE<sup>n</sup></code>
 function AptInt:LeftShift(n: number): AptInt
@@ -523,9 +553,8 @@ end
 --> METAMETHODS
 -- ============
 
-AptInt.__unm = function(num: AptInt): AptInt
-	return num:Negate()
-end
+AptInt.__tostring = AptInt.ToString
+AptInt.__unm = AptInt.Negate
 
 AptInt.__add = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): AptInt
 	local term1: AptInt = ArgumentToAptInt(a, "add")
@@ -590,10 +619,6 @@ AptInt.__le = function(a: ValidMetamethodArgument, b: ValidMetamethodArgument): 
 	local term2: AptInt = ArgumentToAptInt(b, "compare")
 
 	return term1:LowerOrEqualToRaw(term2)
-end
-
-AptInt.__tostring = function(n: AptInt): string
-	return n:ToString()
 end
 
 AptInt.__len = function(n: AptInt): number

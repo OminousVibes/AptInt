@@ -38,6 +38,10 @@ export type AptInt = setmetatable<{
 
 	read ToString: (self: AptInt) -> string,
 	read ToNumber: (self: AptInt) -> number,
+	
+	read Abs: (self: AptInt, inPlace: boolean?) -> AptInt,
+	read Min: (self: AptInt, ...AptInt) -> AptInt,
+	read Max: (self: AptInt, ...AptInt) -> AptInt,
 }, AptIntMetatable>
 
 export type ValidConstructor = string | number | {number} | nil
