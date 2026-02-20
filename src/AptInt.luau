@@ -391,6 +391,7 @@ end
 function AptInt:PowRaw(pow: AptInt): AptInt
 	local selfSign: number, powSign: number = self.signum, pow.signum
 	local selfLimbs: {number}, powLimbs: {number} = self.limbs, pow.limbs
+	local oddPow: boolean = #powLimbs > 0 and powLimbs[1] % 2 == 1
 	
 	--> CASES
 	if powSign ~= 1 then
@@ -402,17 +403,28 @@ function AptInt:PowRaw(pow: AptInt): AptInt
 	if #powLimbs == 1 and powLimbs[1] == 1 then
 		return tclone(self)
 	elseif #selfLimbs == 1 and selfLimbs[1] == 1 then
-		return FromLimbs({1})
+		local unit: AptInt = FromLimbs({1})
+		if selfSign == -1 and oddPow then
+			unit.signum = -1
+		end
+
+		return unit
 	end
 
 	local resultLimbs: {number}
 	if #powLimbs == 1 then -- single-limb exponentiation
 		resultLimbs =  Pow.PowByInt(selfLimbs, powLimbs[1])
 	else
-		resultLimbs = Pow.PowLimbs(selfLimbs, powLimbs)
+		--> avoid mutating caller-owned exponent limbs during in-place halving
+		resultLimbs = Pow.PowLimbs(selfLimbs, tclone(powLimbs))
 	end
-	
-	return FromLimbs(resultLimbs)
+
+	local result: AptInt = FromLimbs(resultLimbs)
+	if selfSign == -1 and oddPow then
+		result.signum = -1
+	end
+
+	return result
 end
 
 -- Returns a new AptInt equal to <code>sqrt(n)</code>.
