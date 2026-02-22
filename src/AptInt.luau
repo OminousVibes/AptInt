@@ -58,6 +58,7 @@ local RADIX_LEN_CONST: number = Constants.RADIX_LEN_CONST
 local RADIX_CHUNK_SIZE: number = Constants.RADIX_CHUNK_SIZE
 
 local AP_NEG_ONE: AptInt
+local ONE_LIMB: {number} = {1}
 
 --> CONSTRUCTOR
 local typeConstructors: {[string]: (any) -> ({number}, number)} = {
@@ -67,7 +68,13 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 			str = str:sub(2, #str)
 		end
 		
-		if str == "0" then return {}, 0 end
+		--> canonicalize all-zero/leading-zero decimal strings
+		local firstNonZero: number? = str:find("[^0]")
+		if firstNonZero == nil then
+			return {}, 0
+		elseif firstNonZero ~= 1 then
+			str = str:sub(firstNonZero, #str)
+		end
 		
 		--> TODO: we could probably use algoritm 1.25 FastIntegerInput
 		--> convert from decimal to base 2^24
@@ -122,12 +129,25 @@ local typeConstructors: {[string]: (any) -> ({number}, number)} = {
 	end,
 
 	["table"] = function(tbl: {any}): ({number}, number)	
-		local first: number = tbl[1]
-		if not first then
+		local len: number = #tbl
+		if len == 0 then
 			return {}, 0
 		end
 
-		return tbl, 1
+		if tbl[len] ~= 0 then
+			return tbl, 1
+		end
+
+		--> canonicalize zero/trailing-zero table constructor inputs.
+		while len > 0 and tbl[len] == 0 do
+			len -= 1
+		end
+
+		if len == 0 then
+			return {}, 0
+		end
+
+		return tmove(tbl, 1, len, 1, {}), 1
 	end,
 
 	["nil"] = function(_: nil): ({number}, number)
@@ -172,6 +192,14 @@ local function FromLimbs(limbs: {number}): AptInt
 	}, AptInt :: AptInt) :: AptInt
 end
 
+local function CopyAptInt(value: AptInt): AptInt
+	-- clone limb storage too so returned values stay isolated.
+	return setmetatable({
+		limbs = tclone(value.limbs),
+		signum = value.signum,
+	}, AptInt :: AptInt) :: AptInt
+end
+
 local function CorrectRemainder(self: AptInt, divisor: AptInt, remainder: AptInt): AptInt
 	local selfSign: number, divSign: number = self.signum, divisor.signum
 	local sameSign: boolean = selfSign == divSign
@@ -210,7 +238,7 @@ AP_NEG_ONE = AptInt.new(-1)
 
 -- Returns a copy of the AptInt.
 function AptInt:clone(): AptInt
-	return tclone(self) :: AptInt -- clones metatable too
+	return CopyAptInt(self)
 end
 
 -- Returns an AptInt with its sign flipped.
@@ -220,7 +248,7 @@ function AptInt:Negate(inPlace: boolean): AptInt
 		return self
 	end
 
-	local negated: AptInt = tclone(self)
+	local negated: AptInt = CopyAptInt(self)
 	negated.signum = -negated.signum
 	return negated
 end
@@ -235,13 +263,10 @@ function AptInt:AddRaw(term: AptInt, inPlace: boolean?): AptInt
 
 	--> CASES
 	if termSign == 0 then
-		return (inPlace and self or tclone(self))
+		return (inPlace and self or CopyAptInt(self))
 	elseif selfSign == 0 then
-		if inPlace then
-			self.limbs = term.limbs
-			self.signum = termSign
-			return self
-		end
+		local clone: AptInt = CopyAptInt(term)
+		if inPlace then self = clone end
 
 		return tclone(term)
 	elseif selfSign == -1 and termSign == 1 then -- -a+b = b+(-a) = b-a
@@ -262,7 +287,7 @@ function AptInt:SubtractRaw(term: AptInt, inPlace: boolean?): AptInt
 
 	--> CASES
 	if termSign == 0 then -- b - 0 = 0
-		return (inPlace and self or tclone(self))
+		return (inPlace and self or CopyAptInt(self))
 	elseif selfSign == 0 then -- 0 - b = -b
 		if inPlace then
 			-- mutate receiver instead of rebinding local self
@@ -335,7 +360,7 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 			return AP_NEG_ONE:clone(), divisor:SubtractRaw(NegateRef(self))
 		end
 
-		return FromLimbs({}), tclone(self)
+		return FromLimbs({}), CopyAptInt(self)
 	elseif comparison == 0 then -- U == V, x/x = 1
 		local div: AptInt = FromLimbs({1})
 		div.signum = selfSign / divSign
@@ -354,6 +379,11 @@ function AptInt:DivideRaw(divisor: AptInt): (AptInt, AptInt)
 	local quotient: AptInt, remainder: AptInt = FromLimbs(quotientLimbs), FromLimbs(remLimbs)
 	
 	remainder = CorrectRemainder(self, divisor, remainder)
+	if not sameSign and #remLimbs > 0 then
+		--> floor semantics: mixed-sign non-exact division needs one extra step
+		quotient.limbs = Add.AddLimbs(quotient.limbs, ONE_LIMB, true)
+	end
+
 	quotient.signum = selfSign / divSign
 	return quotient, remainder
 end
@@ -364,13 +394,16 @@ function AptInt:ModRaw(div: AptInt): AptInt
 
 	local selfSign: number, divSign: number = self.signum, div.signum
 
-	local divFirst: number = divLimbs[1] * divSign
-	local selfFirst: number = selfLimbs[1] * selfSign
-
 	--> CASES
-	if divSign == 0 or (#divLimbs == 1 and abs(divFirst) == 1) then
+	if #divLimbs == 0 or #selfLimbs == 0 or divSign == 0 then
+		return FromLimbs({})
+	end
+
+	local divFirst: number = divLimbs[1] * divSign
+	if #divLimbs == 1 and abs(divFirst) == 1 then
 		return FromLimbs({})
 	elseif #selfLimbs == 1 and #divLimbs == 1 then
+		local selfFirst: number = selfLimbs[1] * selfSign
 		return AptInt.new(selfFirst % divFirst)
 	end
 
@@ -382,6 +415,7 @@ end
 function AptInt:PowRaw(pow: AptInt): AptInt
 	local selfSign: number, powSign: number = self.signum, pow.signum
 	local selfLimbs: {number}, powLimbs: {number} = self.limbs, pow.limbs
+	local oddPow: boolean = #powLimbs > 0 and powLimbs[1] % 2 == 1
 	
 	--> CASES
 	if powSign ~= 1 then
@@ -391,19 +425,30 @@ function AptInt:PowRaw(pow: AptInt): AptInt
 	end
 
 	if #powLimbs == 1 and powLimbs[1] == 1 then
-		return tclone(self)
+		return CopyAptInt(self)
 	elseif #selfLimbs == 1 and selfLimbs[1] == 1 then
-		return FromLimbs({1})
+		local unit: AptInt = FromLimbs({1})
+		if selfSign == -1 and oddPow then
+			unit.signum = -1
+		end
+
+		return unit
 	end
 
 	local resultLimbs: {number}
 	if #powLimbs == 1 then -- single-limb exponentiation
 		resultLimbs =  Pow.PowByInt(selfLimbs, powLimbs[1])
 	else
-		resultLimbs = Pow.PowLimbs(selfLimbs, powLimbs)
+		--> avoid mutating caller-owned exponent limbs during in-place halving
+		resultLimbs = Pow.PowLimbs(selfLimbs, tclone(powLimbs))
 	end
-	
-	return FromLimbs(resultLimbs)
+
+	local result: AptInt = FromLimbs(resultLimbs)
+	if selfSign == -1 and oddPow then
+		result.signum = -1
+	end
+
+	return result
 end
 
 -- Returns a new AptInt equal to <code>sqrt(n)</code>.
@@ -474,7 +519,7 @@ function AptInt:Abs(inPlace: boolean?): AptInt
 		return self
 	end
 	
-	local result: AptInt = tclone(self)
+	local result: AptInt = CopyAptInt(self)
 	result.signum = abs(result.signum)
 	return result
 end
@@ -488,7 +533,7 @@ function AptInt:Max(...: AptInt)
 		max = num
 	end
 	
-	return tclone(max)
+	return CopyAptInt(max)
 end
 
 -- Returns the minimum value among the arguments passed to the function.
@@ -500,7 +545,7 @@ function AptInt:Min(...: AptInt)
 		max = num
 	end
 
-	return tclone(max)
+	return CopyAptInt(max)
 end
 
 -- =====================
@@ -523,10 +568,11 @@ function AptInt:LowerThanRaw(num: AptInt): boolean
 	--> check sign
 	if selfSign < numSign then
 		return true
+	elseif selfSign > numSign then
+		return false
 	end
 
-	local bothNegative: boolean = (selfSign == numSign and selfSign == -1)
-	if bothNegative then
+	if selfSign == -1 then
 		return Cmp.LowerThan(num.limbs, self.limbs)
 	end
 
@@ -538,12 +584,13 @@ function AptInt:LowerOrEqualToRaw(num: AptInt): boolean
 	local selfSign: number, numSign: number = self.signum, num.signum
 
 	--> check sign
-	if selfSign <= numSign then
+	if selfSign < numSign then
 		return true
+	elseif selfSign > numSign then
+		return false
 	end
 
-	local bothNegative: boolean = (selfSign == numSign and selfSign == -1)
-	if bothNegative then
+	if selfSign == -1 then
 		return Cmp.LowerOrEqualTo(num.limbs, self.limbs)
 	end
 	
@@ -557,12 +604,27 @@ end
 -- Returns a new AptInt equal to <code>self*BASE<sup>n</sup></code>
 function AptInt:LeftShift(n: number): AptInt
 	-- this is the fastest way to leftshift
-	return FromLimbs(tmove(self.limbs, 1, #self.limbs, n+1, tcreate(n, 0)))
+	local selfSign: number = self.signum
+	if selfSign == 0 then
+		return FromLimbs({})
+	end
+
+	local shifted: AptInt = FromLimbs(tmove(self.limbs, 1, #self.limbs, n+1, tcreate(n, 0)))
+	shifted.signum = selfSign
+	return shifted
 end
 
 -- Returns a new AptInt equal to <code>self/BASE<sup>n</sup></code>
 function AptInt:RightShift(n: number): AptInt
-	return FromLimbs(tmove(self.limbs, 1, #self.limbs-n, 1, {}))
+	local selfSign: number = self.signum
+	local limbLen: number = #self.limbs
+	if selfSign == 0 or n >= limbLen then
+		return FromLimbs({})
+	end
+
+	local shifted: AptInt = FromLimbs(tmove(self.limbs, n+1, limbLen, 1, {}))
+	shifted.signum = selfSign
+	return shifted
 end
 
 -- ============

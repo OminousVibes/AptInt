@@ -26,7 +26,7 @@ end
 function Pow.PowLimbs(limbs: {number}, exp: {number}): {number}
 	--> exponentiation by squaring
 	local result: {number} = {1}
-	while #exp ~= 1 and exp[1] ~= 0 do
+	while #exp > 0 do
 		if exp[1] % 2 == 1 then
 			result = Mul.MulLimbs(result, limbs)
 		end
